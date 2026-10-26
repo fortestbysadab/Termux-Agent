@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Termux Agent — Autonomous Terminal & Connectors</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">⚡</div>
+          <span class="logo-text">Termux Agent</span>
+        </div>
+        <button class="btn-icon" id="closeSidebarBtn" title="Close sidebar">✕</button>
+      </div>
+
+      <div class="sidebar-actions">
+        <button class="btn btn-primary" id="newChatBtn">
+          <span>+</span> New Chat
+        </button>
+        <button class="btn btn-outline" id="openConnectorsBtn">
+          <span class="icon">🔌</span> Connectors
+          <span class="badge" id="activeConnectorsCount">0</span>
+        </button>
+      </div>
+
+      <div class="sessions-section">
+        <div class="section-title">
+          <span>Recent Chats</span>
+          <button class="btn-text-danger" id="clearAllChatsBtn" title="Delete all history">Clear All</button>
+        </div>
+        <div class="sessions-list" id="sessionsList">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="pulse-dot"></span>
+          <span>Isolated Proot Sandbox Ready</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Navigation Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="btn-icon" id="toggleSidebarBtn">☰</button>
+          <div class="session-info">
+            <h1 class="session-title" id="currentSessionTitle">New Chat</h1>
+            <span class="session-meta" id="currentSessionMeta">Isolated Workspace Session</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <button class="btn btn-sm btn-outline" id="toggleWorkspaceBtn">
+            <span class="icon">📁</span> Workspace Files (<span id="workspaceFileCount">0</span>)
+          </button>
+          <button class="btn btn-sm btn-outline" id="topConnectorsBtn">
+            <span class="icon">🔌</span> Connectors
+          </button>
+        </div>
+      </header>
+
+      <!-- Chat Thread -->
+      <div class="chat-container" id="chatContainer">
+        <div class="messages-list" id="messagesList">
+          <!-- Empty state or messages -->
+        </div>
+      </div>
+
+      <!-- Chat Input Area -->
+      <footer class="input-area">
+        <div class="input-wrapper">
+          <textarea 
+            id="chatInput" 
+            placeholder="Ask anything, run a terminal command, or request files (e.g. 'Run apt update', 'Create a Python script that calculates primes and save to primes.py')..." 
+            rows="1"
+          ></textarea>
+          <button class="btn btn-send" id="sendBtn" title="Send message">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
+        <div class="input-hint">
+          <span>Terminal commands execute inside per-session isolated <code>/workspace</code> jail. Press <strong>Enter</strong> to send, <strong>Shift+Enter</strong> for newline.</span>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Workspace Drawer -->
+    <div class="drawer" id="workspaceDrawer">
+      <div class="drawer-header">
+        <h3>Session Workspace Files</h3>
+        <button class="btn-icon" id="closeDrawerBtn">✕</button>
+      </div>
+      <div class="drawer-content">
+        <p class="drawer-desc">Files created or modified by the agent in this session's sandbox directory.</p>
+        <div class="file-list" id="drawerFileList">
+          <p class="empty-text">No files generated yet in this session.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connectors Modal (Matching User's Reference Screenshot) -->
+  <div class="modal-backdrop" id="connectorsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Connectors</h2>
+        <button class="btn-icon" id="closeConnectorsModalBtn">✕</button>
+      </div>
+      
+      <div class="modal-body">
+        <p class="modal-subtitle">Connect your apps and custom MCP servers to use their tools in Agent chats.</p>
+        
+        <!-- Connectors List -->
+        <div class="connectors-list" id="connectorsList">
+          <!-- Populated dynamically -->
+        </div>
+
+        <!-- Custom MCP Section -->
+        <div class="custom-mcp-section">
+          <h3>Custom MCP Connector</h3>
+          <p>Connect any Model Context Protocol (MCP) server via local stdio command or remote SSE endpoint.</p>
+          <button class="btn btn-primary btn-sm" id="openAddMcpBtn">+ Add Custom MCP Server</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connector Config Sub-Modal -->
+  <div class="modal-backdrop" id="connectorConfigModal">
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3 id="configConnectorName">Configure Connector</h3>
+        <button class="btn-icon" id="closeConfigModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="connectorConfigForm">
+          <input type="hidden" id="configConnectorId">
+          <div id="configFormFields"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-outline" id="cancelConfigBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save & Connect</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Custom MCP Modal -->
+  <div class="modal-backdrop" id="addMcpModal">
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3>Add Custom MCP Server</h3>
+        <button class="btn-icon" id="closeAddMcpModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="addMcpForm">
+          <div class="form-group">
+            <label for="mcpName">Connector Name</label>
+            <input type="text" id="mcpName" placeholder="e.g. Postgres DB, My API" required>
+          </div>
+          <div class="form-group">
+            <label for="mcpKind">Transport</label>
+            <select id="mcpKind">
+              <option value="mcp_stdio">Stdio Command (Local CLI / npx / python)</option>
+              <option value="mcp_sse">Streamable HTTP / SSE Endpoint (Remote URL)</option>
+            </select>
+          </div>
+          <div class="form-group" id="mcpCommandGroup">
+            <label for="mcpCommand">Command</label>
+            <input type="text" id="mcpCommand" placeholder="e.g. npx -y @modelcontextprotocol/server-postgres">
+          </div>
+          <div class="form-group hidden" id="mcpUrlGroup">
+            <label for="mcpUrl">SSE / HTTP URL</label>
+            <input type="url" id="mcpUrl" placeholder="https://mcp.mycompany.com/sse">
+          </div>
+          <div class="form-group">
+            <label for="mcpDescription">Description (Optional)</label>
+            <input type="text" id="mcpDescription" placeholder="What tools does this server provide?">
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-outline" id="cancelAddMcpBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add Server</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Preview Modal -->
+  <div class="modal-backdrop" id="filePreviewModal">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3 id="previewFileName">File Preview</h3>
+        <div class="modal-header-actions">
+          <a class="btn btn-sm btn-outline" id="downloadPreviewBtn" download>Download</a>
+          <button class="btn-icon" id="closePreviewBtn">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <pre class="file-preview-content" id="previewFileContent"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

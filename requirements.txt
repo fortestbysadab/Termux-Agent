@@ -1,0 +1,4 @@
+# Termux Agent is designed to run with ZERO mandatory pip dependencies!
+# Core functionality uses Python 3.10+ standard library.
+# Optional packages for extended capabilities:
+mcp>=1.0.0
