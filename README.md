@@ -27,8 +27,18 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - Switch between conversations seamlessly from the sidebar.
    - Delete individual conversations (and their associated workspace files) or clear all history at any time.
 
-5. **Zero External Dependencies**:
-   - Built entirely on Python standard library (`sqlite3`, `http.server`, `subprocess`, `urllib`).
+5. **Real-time Live Command Streaming & Structured Error Cards**:
+   - Live Server-Sent Events (SSE) stream the exact `$ BASH` command currently running on screen in real-time.
+   - Expandable tool execution cards showing command status, exit codes, and stdout/stderr output.
+   - Beautiful, structured Error Cards displaying actionable remedies directly in the UI instead of unparsed raw error dumps.
+
+6. **Android Bionic Linker & Gemini Thinking Model Hardening**:
+   - Bionic CFI-safe execution sandbox (omits virtual address caps that trigger `linker_cfi.cpp:158` aborts on Android).
+   - Full support for Google Gemini 2.5/3 thinking models with automatic thought signature preservation and parameter schema sanitization.
+
+7. **Zero External Dependencies**:
+   - Built entirely on the Python standard library (`sqlite3`, `http.server`, `subprocess`, `urllib`).
+   - Automated CI testing via GitHub Actions across Python 3.10, 3.11, and 3.12.
    - Fast, lightweight, and requires no heavy compilation on Termux.
 
 ---
