@@ -101,11 +101,14 @@ class AgentRunner:
             assistant_msg = {"role": "assistant", "content": content or ""}
             formatted_tc = []
             for tc in tool_calls:
-                formatted_tc.append({
+                call_dict = {
                     "id": tc["id"],
                     "type": "function",
-                    "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"])}
-                })
+                    "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"])},
+                }
+                if tc.get("extra_content"):
+                    call_dict["extra_content"] = tc["extra_content"]
+                formatted_tc.append(call_dict)
             assistant_msg["tool_calls"] = formatted_tc
             messages.append(assistant_msg)
 

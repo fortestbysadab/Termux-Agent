@@ -1,148 +1,144 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="system">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Termux Agent — Autonomous Terminal & Connectors</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Termux Agent</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="app-container">
+  <div class="app" id="root">
     <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <div class="logo">
-          <div class="logo-icon">⚡</div>
-          <span class="logo-text">Termux Agent</span>
-        </div>
-        <button class="btn-icon" id="closeSidebarBtn" title="Close sidebar">✕</button>
+    <aside class="side" id="sidebar">
+      <div class="sidehead">
+        <div class="mark">T</div>
+        <b>Termux Agent</b>
       </div>
 
-      <div class="sidebar-actions">
-        <button class="btn btn-primary" id="newChatBtn">
-          <span>+</span> New Chat
+      <button class="newchat" id="newChatBtn">
+        <span>+</span> New chat
+      </button>
+
+      <nav class="nav">
+        <button id="navChat" class="nav-tab active" aria-current="page">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          Chat
         </button>
-        <button class="btn btn-outline" id="openConnectorsBtn">
-          <span class="icon">🔌</span> Connectors
-          <span class="badge" id="activeConnectorsCount">0</span>
+        <button id="navConnectors" class="nav-tab">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Connectors
+          <span class="count" id="activeConnectorsBadge">0</span>
         </button>
+        <button id="navFiles" class="nav-tab">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          Files
+          <span class="count" id="workspaceFilesBadge">0</span>
+        </button>
+      </nav>
+
+      <div class="history scroll">
+        <div class="histhead">Recent chats</div>
+        <div id="sessionsList"></div>
       </div>
 
-      <div class="sessions-section">
-        <div class="section-title">
-          <span>Recent Chats</span>
-          <button class="btn-text-danger" id="clearAllChatsBtn" title="Delete all history">Clear All</button>
+      <div class="sidefoot">
+        <div class="themes" id="themePicker">
+          <button data-theme-val="system" aria-pressed="true">system</button>
+          <button data-theme-val="light">light</button>
+          <button data-theme-val="dark">dark</button>
         </div>
-        <div class="sessions-list" id="sessionsList">
-          <!-- Loaded dynamically -->
-        </div>
-      </div>
-
-      <div class="sidebar-footer">
-        <div class="status-indicator">
-          <span class="pulse-dot"></span>
-          <span>Isolated Proot Sandbox Ready</span>
-        </div>
+        <button class="ghost" id="clearAllChatsBtn">Clear all chats</button>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
-    <main class="main-content">
-      <!-- Top Navigation Bar -->
+    <div class="scrim" id="scrim"></div>
+
+    <!-- Main Section -->
+    <main class="main">
       <header class="topbar">
-        <div class="topbar-left">
-          <button class="btn-icon" id="toggleSidebarBtn">☰</button>
-          <div class="session-info">
-            <h1 class="session-title" id="currentSessionTitle">New Chat</h1>
-            <span class="session-meta" id="currentSessionMeta">Isolated Workspace Session</span>
-          </div>
-        </div>
-        <div class="topbar-right">
-          <button class="btn btn-sm btn-outline" id="toggleWorkspaceBtn">
-            <span class="icon">📁</span> Workspace Files (<span id="workspaceFileCount">0</span>)
-          </button>
-          <button class="btn btn-sm btn-outline" id="topConnectorsBtn">
-            <span class="icon">🔌</span> Connectors
-          </button>
+        <button class="burger" id="burgerBtn" aria-label="Open sidebar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <h1 id="topbarTitle">New chat</h1>
+        <div class="status">
+          <span class="dot"></span>
+          <span>Sandbox ready</span>
         </div>
       </header>
 
-      <!-- Chat Thread -->
-      <div class="chat-container" id="chatContainer">
-        <div class="messages-list" id="messagesList">
-          <!-- Empty state or messages -->
+      <!-- Screen 1: Chat Screen -->
+      <section class="screen chat" id="chatScreen">
+        <div class="thread-container scroll" id="threadContainer">
+          <div class="thread" id="messagesList"></div>
         </div>
-      </div>
 
-      <!-- Chat Input Area -->
-      <footer class="input-area">
-        <div class="input-wrapper">
-          <textarea 
-            id="chatInput" 
-            placeholder="Ask anything, run a terminal command, or request files (e.g. 'Run apt update', 'Create a Python script that calculates primes and save to primes.py')..." 
-            rows="1"
-          ></textarea>
-          <button class="btn btn-send" id="sendBtn" title="Send message">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-            </svg>
-          </button>
+        <div class="composer">
+          <div class="shell">
+            <textarea 
+              id="chatInput" 
+              placeholder="Ask anything, run a terminal command, or request files..." 
+              rows="1"
+            ></textarea>
+            <div class="shellfoot">
+              <span class="hint">Press Enter to send, Shift+Enter for newline</span>
+              <button class="send" id="sendBtn" title="Send message" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                  <path d="M12 4l-8 8h5v8h6v-8h5z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="privacy">
+            <span>⚡ Isolated per-session /workspace sandbox</span>
+          </div>
         </div>
-        <div class="input-hint">
-          <span>Terminal commands execute inside per-session isolated <code>/workspace</code> jail. Press <strong>Enter</strong> to send, <strong>Shift+Enter</strong> for newline.</span>
+      </section>
+
+      <!-- Screen 2: Connectors Screen (Matching your screenshots) -->
+      <section class="screen hidden" id="connectorsScreen">
+        <div class="cards">
+          <div class="card" style="margin-block-end: 12px;">
+            <h3>Connectors & Custom MCP</h3>
+            <p class="meta">Connect third-party apps and Model Context Protocol servers to use in Agent chats.</p>
+          </div>
+
+          <div id="connectorsList"></div>
+
+          <!-- Custom MCP Box -->
+          <div class="custom-mcp-section">
+            <h3>Custom MCP Server</h3>
+            <p>Connect any Model Context Protocol server via local stdio command or remote SSE endpoint.</p>
+            <button class="btn btn-primary" id="openAddMcpBtn">+ Add Custom MCP Server</button>
+          </div>
         </div>
-      </footer>
+      </section>
+
+      <!-- Screen 3: Workspace Files Screen -->
+      <section class="screen hidden" id="filesScreen">
+        <input class="filter" id="fileFilterInput" placeholder="Filter session files..." />
+        <div class="cards" id="workspaceFilesList">
+          <div class="empty">No files generated yet in this session. Ask the agent to create a script, report, or document.</div>
+        </div>
+      </section>
     </main>
-
-    <!-- Workspace Drawer -->
-    <div class="drawer" id="workspaceDrawer">
-      <div class="drawer-header">
-        <h3>Session Workspace Files</h3>
-        <button class="btn-icon" id="closeDrawerBtn">✕</button>
-      </div>
-      <div class="drawer-content">
-        <p class="drawer-desc">Files created or modified by the agent in this session's sandbox directory.</p>
-        <div class="file-list" id="drawerFileList">
-          <p class="empty-text">No files generated yet in this session.</p>
-        </div>
-      </div>
-    </div>
   </div>
 
-  <!-- Connectors Modal (Matching User's Reference Screenshot) -->
-  <div class="modal-backdrop" id="connectorsModal">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2>Connectors</h2>
-        <button class="btn-icon" id="closeConnectorsModalBtn">✕</button>
-      </div>
-      
-      <div class="modal-body">
-        <p class="modal-subtitle">Connect your apps and custom MCP servers to use their tools in Agent chats.</p>
-        
-        <!-- Connectors List -->
-        <div class="connectors-list" id="connectorsList">
-          <!-- Populated dynamically -->
-        </div>
-
-        <!-- Custom MCP Section -->
-        <div class="custom-mcp-section">
-          <h3>Custom MCP Connector</h3>
-          <p>Connect any Model Context Protocol (MCP) server via local stdio command or remote SSE endpoint.</p>
-          <button class="btn btn-primary btn-sm" id="openAddMcpBtn">+ Add Custom MCP Server</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Connector Config Sub-Modal -->
+  <!-- Connector Config Modal -->
   <div class="modal-backdrop" id="connectorConfigModal">
     <div class="modal-card modal-sm">
       <div class="modal-header">
-        <h3 id="configConnectorName">Configure Connector</h3>
+        <h2 id="configConnectorName">Configure Connector</h2>
         <button class="btn-icon" id="closeConfigModalBtn">✕</button>
       </div>
       <div class="modal-body">
@@ -150,7 +146,7 @@
           <input type="hidden" id="configConnectorId">
           <div id="configFormFields"></div>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" id="cancelConfigBtn">Cancel</button>
+            <button type="button" class="btn" id="cancelConfigBtn">Cancel</button>
             <button type="submit" class="btn btn-primary">Save & Connect</button>
           </div>
         </form>
@@ -162,7 +158,7 @@
   <div class="modal-backdrop" id="addMcpModal">
     <div class="modal-card modal-sm">
       <div class="modal-header">
-        <h3>Add Custom MCP Server</h3>
+        <h2>Add Custom MCP Server</h2>
         <button class="btn-icon" id="closeAddMcpModalBtn">✕</button>
       </div>
       <div class="modal-body">
@@ -191,7 +187,7 @@
             <input type="text" id="mcpDescription" placeholder="What tools does this server provide?">
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" id="cancelAddMcpBtn">Cancel</button>
+            <button type="button" class="btn" id="cancelAddMcpBtn">Cancel</button>
             <button type="submit" class="btn btn-primary">Add Server</button>
           </div>
         </form>
@@ -203,14 +199,14 @@
   <div class="modal-backdrop" id="filePreviewModal">
     <div class="modal-card modal-lg">
       <div class="modal-header">
-        <h3 id="previewFileName">File Preview</h3>
+        <h2 id="previewFileName">File Preview</h2>
         <div class="modal-header-actions">
-          <a class="btn btn-sm btn-outline" id="downloadPreviewBtn" download>Download</a>
+          <a class="btn btn-primary" id="downloadPreviewBtn" download>Download</a>
           <button class="btn-icon" id="closePreviewBtn">✕</button>
         </div>
       </div>
       <div class="modal-body">
-        <pre class="file-preview-content" id="previewFileContent"></pre>
+        <pre class="prose pre" id="previewFileContent" style="white-space: pre-wrap; font-size: 13px; max-height: 60vh;"></pre>
       </div>
     </div>
   </div>

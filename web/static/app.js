@@ -1,49 +1,58 @@
-// Termux Agent Frontend Client Application
+// Termux Agent — Clean Frontend Client matching Android Agent Design
 
 const state = {
   currentSessionId: null,
+  activeScreen: 'chat',
   sessions: [],
   connectors: [],
   workspaceFiles: [],
 };
 
-// --- DOM Elements ---
+// --- DOM References ---
 const sidebar = document.getElementById('sidebar');
-const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
-const closeSidebarBtn = document.getElementById('closeSidebarBtn');
+const scrim = document.getElementById('scrim');
+const burgerBtn = document.getElementById('burgerBtn');
+const topbarTitle = document.getElementById('topbarTitle');
 const newChatBtn = document.getElementById('newChatBtn');
 const clearAllChatsBtn = document.getElementById('clearAllChatsBtn');
 const sessionsList = document.getElementById('sessionsList');
-const currentSessionTitle = document.getElementById('currentSessionTitle');
-const currentSessionMeta = document.getElementById('currentSessionMeta');
+
+// Screens & Tabs
+const navChat = document.getElementById('navChat');
+const navConnectors = document.getElementById('navConnectors');
+const navFiles = document.getElementById('navFiles');
+const chatScreen = document.getElementById('chatScreen');
+const connectorsScreen = document.getElementById('connectorsScreen');
+const filesScreen = document.getElementById('filesScreen');
+
+// Chat DOM
+const threadContainer = document.getElementById('threadContainer');
 const messagesList = document.getElementById('messagesList');
 const chatInput = document.getElementById('chatInput');
 const sendBtn = document.getElementById('sendBtn');
-const chatContainer = document.getElementById('chatContainer');
-const workspaceDrawer = document.getElementById('workspaceDrawer');
-const toggleWorkspaceBtn = document.getElementById('toggleWorkspaceBtn');
-const closeDrawerBtn = document.getElementById('closeDrawerBtn');
-const drawerFileList = document.getElementById('drawerFileList');
-const workspaceFileCount = document.getElementById('workspaceFileCount');
-const activeConnectorsCount = document.getElementById('activeConnectorsCount');
+
+// Badges
+const activeConnectorsBadge = document.getElementById('activeConnectorsBadge');
+const workspaceFilesBadge = document.getElementById('workspaceFilesBadge');
+
+// Files Screen
+const fileFilterInput = document.getElementById('fileFilterInput');
+const workspaceFilesList = document.getElementById('workspaceFilesList');
+
+// Connectors Screen
+const connectorsList = document.getElementById('connectorsList');
+const openAddMcpBtn = document.getElementById('openAddMcpBtn');
 
 // Modals
-const connectorsModal = document.getElementById('connectorsModal');
-const openConnectorsBtn = document.getElementById('openConnectorsBtn');
-const topConnectorsBtn = document.getElementById('topConnectorsBtn');
-const closeConnectorsModalBtn = document.getElementById('closeConnectorsModalBtn');
-const connectorsList = document.getElementById('connectorsList');
-
 const connectorConfigModal = document.getElementById('connectorConfigModal');
-const closeConfigModalBtn = document.getElementById('closeConfigModalBtn');
-const cancelConfigBtn = document.getElementById('cancelConfigBtn');
-const connectorConfigForm = document.getElementById('connectorConfigForm');
 const configConnectorName = document.getElementById('configConnectorName');
 const configConnectorId = document.getElementById('configConnectorId');
 const configFormFields = document.getElementById('configFormFields');
+const closeConfigModalBtn = document.getElementById('closeConfigModalBtn');
+const cancelConfigBtn = document.getElementById('cancelConfigBtn');
+const connectorConfigForm = document.getElementById('connectorConfigForm');
 
 const addMcpModal = document.getElementById('addMcpModal');
-const openAddMcpBtn = document.getElementById('openAddMcpBtn');
 const closeAddMcpModalBtn = document.getElementById('closeAddMcpModalBtn');
 const cancelAddMcpBtn = document.getElementById('cancelAddMcpBtn');
 const addMcpForm = document.getElementById('addMcpForm');
@@ -52,10 +61,13 @@ const mcpCommandGroup = document.getElementById('mcpCommandGroup');
 const mcpUrlGroup = document.getElementById('mcpUrlGroup');
 
 const filePreviewModal = document.getElementById('filePreviewModal');
-const closePreviewBtn = document.getElementById('closePreviewBtn');
 const previewFileName = document.getElementById('previewFileName');
 const previewFileContent = document.getElementById('previewFileContent');
 const downloadPreviewBtn = document.getElementById('downloadPreviewBtn');
+const closePreviewBtn = document.getElementById('closePreviewBtn');
+
+// Theme Picker
+const themePicker = document.getElementById('themePicker');
 
 // --- Helper Functions ---
 function escapeHtml(text) {
@@ -68,27 +80,21 @@ function escapeHtml(text) {
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
+  if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-function getFileIcon(filename) {
-  const ext = filename.split('.').pop().toLowerCase();
-  if (['py', 'js', 'sh', 'c', 'cpp', 'rs', 'go'].includes(ext)) return '📜';
-  if (['json', 'yaml', 'yml', 'toml'].includes(ext)) return '⚙️';
-  if (['csv', 'tsv', 'xlsx'].includes(ext)) return '📊';
-  if (['pdf'].includes(ext)) return '📕';
-  if (['md', 'txt'].includes(ext)) return '📝';
-  if (['html', 'css'].includes(ext)) return '🌐';
-  if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) return '🖼️';
-  return '📄';
+function formatTime(timestamp) {
+  if (!timestamp) return '';
+  const d = new Date(timestamp * 1000);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function getConnectorIconSvg(name) {
-  const icons = {
+function getConnectorEmoji(id) {
+  const map = {
     github: '🐙',
     drive: '📁',
     docs: '📄',
@@ -101,19 +107,17 @@ function getConnectorIconSvg(name) {
     dropbox: '📦',
     vercel: '▲',
     supabase: '⚡',
-    cpu: '🔌',
   };
-  return icons[name.toLowerCase()] || '🔌';
+  return map[id.toLowerCase()] || '🔌';
 }
 
-// Simple Markdown Formatter
 function renderMarkdown(text) {
   if (!text) return '';
   let html = escapeHtml(text);
 
   // Code blocks ```code```
   html = html.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
-    return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+    return `<pre><code>${code.trim()}</code></pre>`;
   });
 
   // Inline code `code`
@@ -135,8 +139,7 @@ function renderMarkdown(text) {
   return html;
 }
 
-// --- API Calls ---
-
+// --- API Helper ---
 async function api(path, options = {}) {
   const resp = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -149,8 +152,41 @@ async function api(path, options = {}) {
   return await resp.json();
 }
 
-// --- Sessions Management ---
+// --- Screen Switching ---
+function switchScreen(screen) {
+  state.activeScreen = screen;
 
+  // Tabs
+  navChat.classList.toggle('active', screen === 'chat');
+  navChat.setAttribute('aria-current', screen === 'chat' ? 'page' : 'false');
+  navConnectors.classList.toggle('active', screen === 'connectors');
+  navConnectors.setAttribute('aria-current', screen === 'connectors' ? 'page' : 'false');
+  navFiles.classList.toggle('active', screen === 'files');
+  navFiles.setAttribute('aria-current', screen === 'files' ? 'page' : 'false');
+
+  // Screens
+  chatScreen.classList.toggle('hidden', screen !== 'chat');
+  connectorsScreen.classList.toggle('hidden', screen !== 'connectors');
+  filesScreen.classList.toggle('hidden', screen !== 'files');
+
+  if (screen === 'connectors') {
+    topbarTitle.textContent = 'Connectors';
+    loadConnectors();
+  } else if (screen === 'files') {
+    topbarTitle.textContent = 'Workspace Files';
+    loadWorkspaceFiles();
+  } else {
+    const s = state.sessions.find(x => x.id === state.currentSessionId);
+    topbarTitle.textContent = s ? s.title : 'Chat';
+    scrollToBottom();
+  }
+
+  // Close mobile sidebar if open
+  sidebar.classList.remove('open');
+  scrim.classList.remove('open');
+}
+
+// --- Sessions Management ---
 async function loadSessions() {
   try {
     const data = await api('/api/sessions');
@@ -170,27 +206,24 @@ async function loadSessions() {
 function renderSessionsList() {
   sessionsList.innerHTML = '';
   state.sessions.forEach(session => {
-    const item = document.createElement('div');
-    item.className = `session-item ${session.id === state.currentSessionId ? 'active' : ''}`;
-    item.innerHTML = `
-      <div class="session-item-content">
-        <span class="session-item-title">${escapeHtml(session.title)}</span>
-        <span class="session-item-meta">${session.message_count || 0} messages</span>
-      </div>
-      <button class="session-item-delete" title="Delete conversation" data-id="${session.id}">🗑️</button>
+    const wrap = document.createElement('div');
+    wrap.className = `histitem-wrap ${session.id === state.currentSessionId ? 'on' : ''}`;
+    wrap.innerHTML = `
+      <button class="histitem" title="${escapeHtml(session.title)}">${escapeHtml(session.title)}</button>
+      <button class="histitem-del" title="Delete conversation" data-id="${session.id}">✕</button>
     `;
 
-    item.querySelector('.session-item-content').addEventListener('click', () => {
+    wrap.querySelector('.histitem').addEventListener('click', () => {
       selectSession(session.id);
-      if (window.innerWidth <= 768) sidebar.classList.remove('open');
+      switchScreen('chat');
     });
 
-    item.querySelector('.session-item-delete').addEventListener('click', (e) => {
+    wrap.querySelector('.histitem-del').addEventListener('click', (e) => {
       e.stopPropagation();
       deleteSession(session.id);
     });
 
-    sessionsList.appendChild(item);
+    sessionsList.appendChild(wrap);
   });
 }
 
@@ -200,8 +233,7 @@ async function selectSession(sessionId) {
 
   try {
     const data = await api(`/api/sessions/${sessionId}`);
-    currentSessionTitle.textContent = data.session.title || 'Chat';
-    currentSessionMeta.textContent = `ID: ${sessionId.slice(0, 8)} • Isolated /workspace`;
+    topbarTitle.textContent = data.session.title || 'Chat';
     renderMessages(data.messages || []);
     loadWorkspaceFiles();
   } catch (err) {
@@ -213,10 +245,11 @@ async function createNewSession() {
   try {
     const data = await api('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: 'New Chat' }),
+      body: JSON.stringify({ title: 'New chat' }),
     });
     state.sessions.unshift(data.session);
     selectSession(data.session.id);
+    switchScreen('chat');
     chatInput.focus();
   } catch (err) {
     console.error('Failed to create session:', err);
@@ -224,7 +257,7 @@ async function createNewSession() {
 }
 
 async function deleteSession(sessionId) {
-  if (!confirm('Are you sure you want to delete this chat and its isolated workspace?')) return;
+  if (!confirm('Are you sure you want to delete this chat and its workspace?')) return;
   try {
     await api(`/api/sessions/${sessionId}`, { method: 'DELETE' });
     state.sessions = state.sessions.filter(s => s.id !== sessionId);
@@ -244,7 +277,7 @@ async function deleteSession(sessionId) {
 }
 
 async function clearAllChats() {
-  if (!confirm('Delete ALL chat conversations and workspace files? This cannot be undone.')) return;
+  if (!confirm('Delete ALL chat history and workspace files? This cannot be undone.')) return;
   try {
     await api('/api/sessions', { method: 'DELETE' });
     state.sessions = [];
@@ -255,17 +288,14 @@ async function clearAllChats() {
 }
 
 // --- Messages & Chat Rendering ---
-
 function renderMessages(messages) {
   messagesList.innerHTML = '';
   if (messages.length === 0) {
     messagesList.innerHTML = `
-      <div style="text-align: center; margin: auto; padding: 40px 20px; color: var(--text-muted);">
-        <div style="font-size: 40px; margin-bottom: 12px;">⚡</div>
-        <h3 style="color: var(--text-primary); margin-bottom: 8px;">Termux Agent Ready</h3>
-        <p style="max-width: 440px; margin: 0 auto; font-size: 13.5px; line-height: 1.5;">
-          Ask any question, or run any bash command. If you ask for files or scripts, they are created in your isolated session workspace.
-        </p>
+      <div class="empty">
+        <div style="font-size: 32px; margin-block-end: 8px;">⚡</div>
+        <b>Termux Agent is ready.</b><br>
+        Ask anything, or run terminal commands to install packages, build scripts, or create documents.
       </div>
     `;
     return;
@@ -278,91 +308,101 @@ function renderMessages(messages) {
 }
 
 function appendMessageToDom(msg) {
-  const msgEl = document.createElement('div');
-  msgEl.className = `message ${msg.role}`;
+  const turnEl = document.createElement('div');
+  const isUser = msg.role === 'user';
+  turnEl.className = `turn ${isUser ? 'user' : ''}`;
 
-  let toolRunsHtml = '';
-  if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-    toolRunsHtml = `
-      <div class="tool-runs-container">
-        ${msg.tool_calls.map(tc => {
-          const detail = tc.detail || {};
-          const isTerminal = detail.tool === 'terminal';
-          const title = isTerminal ? detail.command : `${detail.tool || tc.name}`;
-          const isOk = detail.ok !== false;
-          const statusText = isTerminal ? `Exit ${detail.exit_code}` : (isOk ? 'OK' : 'Error');
-          const output = isTerminal ? `${detail.stdout || ''}${detail.stderr ? '\n' + detail.stderr : ''}` : JSON.stringify(detail.result, null, 2);
-
-          return `
-            <div class="tool-run-card">
-              <div class="tool-run-header" onclick="this.nextElementSibling.classList.toggle('hidden')">
-                <div class="tool-run-title">
-                  <span class="badge-tool">${isTerminal ? '$ bash' : '🔌 connector'}</span>
-                  <code>${escapeHtml(title)}</code>
-                </div>
-                <span class="badge-status ${isOk ? 'success' : 'error'}">${statusText}</span>
-              </div>
-              <div class="tool-run-body hidden">${escapeHtml(output || 'No output')}</div>
-            </div>
-          `;
-        }).join('')}
+  if (isUser) {
+    turnEl.innerHTML = `
+      <div class="body">
+        <div class="userbubble">${escapeHtml(msg.content)}</div>
+        <div class="byline" style="margin-block: 4px 0;"><time>${formatTime(msg.created_at)}</time></div>
       </div>
+      <div class="avatar me">You</div>
     `;
+    messagesList.appendChild(turnEl);
+    return;
+  }
+
+  // Assistant turn
+  let toolRunsHtml = '';
+  if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+    toolRunsHtml = msg.tool_calls.map(tc => {
+      const detail = tc.detail || {};
+      const isTerminal = detail.tool === 'terminal';
+      const cmdOrTool = isTerminal ? detail.command : (detail.tool || tc.name);
+      const isOk = detail.ok !== false;
+      const statusBadge = isTerminal ? `Exit ${detail.exit_code}` : (isOk ? 'OK' : 'Error');
+      const output = isTerminal ? `${detail.stdout || ''}${detail.stderr ? '\n' + detail.stderr : ''}` : JSON.stringify(detail.result, null, 2);
+
+      return `
+        <div class="filecard" style="margin-block-end: 10px; font-family: ui-monospace, Menlo, Consolas, monospace;">
+          <div class="filecard-head" style="cursor: pointer;" onclick="this.nextElementSibling.classList.toggle('hidden')">
+            <span class="filechip" style="background: ${isOk ? 'var(--accent-soft)' : 'color-mix(in srgb, var(--danger) 15%, transparent)'}; color: ${isOk ? 'var(--accent)' : 'var(--danger)'};">
+              ${isTerminal ? '$ BASH' : '🔌 MCP'}
+            </span>
+            <span class="filename" style="font-weight: 550;">${escapeHtml(cmdOrTool)}</span>
+            <span class="opens" style="color: ${isOk ? 'var(--ok)' : 'var(--danger)'}; font-size: 11px;">
+              ${statusBadge} ▾
+            </span>
+          </div>
+          <div class="filepreview hidden" style="padding: 12px 14px; background: var(--soft-bg); font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto;">${escapeHtml(output || 'No output')}</div>
+        </div>
+      `;
+    }).join('');
   }
 
   let artifactsHtml = '';
   if (msg.files_generated && Array.isArray(msg.files_generated) && msg.files_generated.length > 0) {
-    artifactsHtml = `
-      <div class="artifacts-container">
-        ${msg.files_generated.map(file => {
-          const name = typeof file === 'string' ? file : file.filename;
-          const relPath = typeof file === 'string' ? file : file.rel_path;
-          const size = file.size_bytes ? formatBytes(file.size_bytes) : '';
-          return `
-            <div class="artifact-card">
-              <div class="artifact-info">
-                <span class="artifact-icon">${getFileIcon(name)}</span>
-                <div class="artifact-details">
-                  <span class="artifact-name">${escapeHtml(name)}</span>
-                  ${size ? `<span class="artifact-size">${size}</span>` : ''}
-                </div>
-              </div>
-              <div class="artifact-actions">
-                <button class="btn btn-sm btn-outline preview-file-btn" data-path="${escapeHtml(relPath)}" data-name="${escapeHtml(name)}">View</button>
-                <a class="btn btn-sm btn-primary" href="/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}" download="${escapeHtml(name)}">Download</a>
-              </div>
+    artifactsHtml = msg.files_generated.map(file => {
+      const name = typeof file === 'string' ? file : file.filename;
+      const relPath = typeof file === 'string' ? file : file.rel_path;
+      const ext = name.split('.').pop() || 'file';
+      const size = file.size_bytes ? formatBytes(file.size_bytes) : '';
+      const href = `/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}`;
+
+      return `
+        <div class="filecard">
+          <div class="filecard-head">
+            <span class="filechip">${ext.toUpperCase()}</span>
+            <span class="filename">${escapeHtml(name)} ${size ? `(${size})` : ''}</span>
+            <div style="margin-inline-start: auto; display: flex; gap: 8px;">
+              <button class="opens preview-btn" data-path="${escapeHtml(relPath)}" data-name="${escapeHtml(name)}" style="background:none;border:0;cursor:pointer;">View</button>
+              <a class="opens" href="${href}" download="${escapeHtml(name)}">Download</a>
             </div>
-          `;
-        }).join('')}
-      </div>
-    `;
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
-  msgEl.innerHTML = `
-    <div class="message-header">
-      <span class="message-author ${msg.role}">${msg.role === 'user' ? 'You' : 'Termux Agent'}</span>
+  turnEl.innerHTML = `
+    <div class="avatar bot">T</div>
+    <div class="body">
+      <div class="byline">
+        <b>Agent</b> <time>${formatTime(msg.created_at)}</time>
+      </div>
+      ${toolRunsHtml}
+      <div class="prose">${renderMarkdown(msg.content)}</div>
+      ${artifactsHtml}
     </div>
-    ${toolRunsHtml}
-    ${artifactsHtml}
-    <div class="message-body">${renderMarkdown(msg.content)}</div>
   `;
 
-  // Attach preview click listeners
-  msgEl.querySelectorAll('.preview-file-btn').forEach(btn => {
+  // Attach preview listeners
+  turnEl.querySelectorAll('.preview-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       previewFile(btn.dataset.path, btn.dataset.name);
     });
   });
 
-  messagesList.appendChild(msgEl);
+  messagesList.appendChild(turnEl);
 }
 
 function scrollToBottom() {
-  chatContainer.scrollTop = chatContainer.scrollHeight;
+  threadContainer.scrollTop = threadContainer.scrollHeight;
 }
 
 // --- Send Message ---
-
 async function sendMessage() {
   const text = chatInput.value.trim();
   if (!text || !state.currentSessionId) return;
@@ -371,21 +411,24 @@ async function sendMessage() {
   chatInput.style.height = 'auto';
   sendBtn.disabled = true;
 
-  // Optimistically show user message
-  appendMessageToDom({ role: 'user', content: text });
+  // Optimistically append user turn
+  appendMessageToDom({ role: 'user', content: text, created_at: Date.now() / 1000 });
   scrollToBottom();
 
-  // Show thinking indicator
-  const loadingEl = document.createElement('div');
-  loadingEl.className = 'message assistant';
-  loadingEl.id = 'loadingMessage';
-  loadingEl.innerHTML = `
-    <div class="message-header"><span class="message-author assistant">Termux Agent</span></div>
-    <div class="message-body" style="color: var(--text-muted); font-style: italic;">
-      ⚡ Executing in isolated sandbox...
+  // Show working indicator
+  const workingEl = document.createElement('div');
+  workingEl.className = 'turn';
+  workingEl.id = 'workingTurn';
+  workingEl.innerHTML = `
+    <div class="avatar bot">T</div>
+    <div class="body">
+      <div class="working">
+        <span>Running in isolated workspace</span>
+        <div class="dots"><span></span><span></span><span></span></div>
+      </div>
     </div>
   `;
-  messagesList.appendChild(loadingEl);
+  messagesList.appendChild(workingEl);
   scrollToBottom();
 
   try {
@@ -394,24 +437,22 @@ async function sendMessage() {
       body: JSON.stringify({ session_id: state.currentSessionId, text }),
     });
 
-    // Remove loading indicator
-    const currentLoading = document.getElementById('loadingMessage');
-    if (currentLoading) currentLoading.remove();
+    const currWorking = document.getElementById('workingTurn');
+    if (currWorking) currWorking.remove();
 
-    // Render returned assistant message
     appendMessageToDom(outcome.message);
     scrollToBottom();
 
-    // Refresh workspace files & session list
     loadWorkspaceFiles();
     loadSessions();
   } catch (err) {
-    const currentLoading = document.getElementById('loadingMessage');
-    if (currentLoading) currentLoading.remove();
+    const currWorking = document.getElementById('workingTurn');
+    if (currWorking) currWorking.remove();
 
     appendMessageToDom({
       role: 'assistant',
-      content: `❌ **Execution Error**: ${err.message}`,
+      content: `⚠️ **Execution Error**: ${err.message}`,
+      created_at: Date.now() / 1000
     });
     scrollToBottom();
   } finally {
@@ -420,46 +461,54 @@ async function sendMessage() {
   }
 }
 
-// --- Workspace Files ---
-
+// --- Workspace Files Screen ---
 async function loadWorkspaceFiles() {
   if (!state.currentSessionId) return;
   try {
     const data = await api(`/api/workspace/${state.currentSessionId}/files`);
     state.workspaceFiles = data.files || [];
-    workspaceFileCount.textContent = state.workspaceFiles.length;
-
-    drawerFileList.innerHTML = '';
-    if (state.workspaceFiles.length === 0) {
-      drawerFileList.innerHTML = '<p class="drawer-desc">No files generated yet in this session.</p>';
-      return;
-    }
-
-    state.workspaceFiles.forEach(f => {
-      const item = document.createElement('div');
-      item.className = 'file-list-item';
-      item.innerHTML = `
-        <div class="file-item-left">
-          <span>${getFileIcon(f.name)}</span>
-          <span class="file-item-name" title="${escapeHtml(f.rel_path)}">${escapeHtml(f.name)}</span>
-        </div>
-        <div style="display: flex; gap: 6px; align-items: center;">
-          <span style="font-size: 11px; color: var(--text-muted);">${formatBytes(f.size)}</span>
-          <button class="btn btn-sm btn-outline preview-drawer-btn" data-path="${escapeHtml(f.rel_path)}" data-name="${escapeHtml(f.name)}">View</button>
-          <a class="btn btn-sm btn-primary" href="/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(f.rel_path)}" download="${escapeHtml(f.name)}">↓</a>
-        </div>
-      `;
-
-      item.querySelector('.preview-drawer-btn').addEventListener('click', () => {
-        previewFile(f.rel_path, f.name);
-      });
-
-      drawerFileList.appendChild(item);
-    });
+    workspaceFilesBadge.textContent = state.workspaceFiles.length;
+    renderWorkspaceFilesList();
   } catch (err) {
     console.error('Failed to load workspace files:', err);
   }
 }
+
+function renderWorkspaceFilesList() {
+  const filter = (fileFilterInput.value || '').toLowerCase().trim();
+  const filtered = state.workspaceFiles.filter(f => f.name.toLowerCase().includes(filter));
+
+  if (filtered.length === 0) {
+    workspaceFilesList.innerHTML = `<div class="empty">${filter ? 'No files match your filter.' : 'No files generated yet in this session.'}</div>`;
+    return;
+  }
+
+  workspaceFilesList.innerHTML = filtered.map(f => {
+    const ext = f.name.split('.').pop() || 'file';
+    const href = `/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(f.rel_path)}`;
+    return `
+      <div class="card" style="display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 12px; overflow: hidden;">
+          <span class="filechip">${ext.toUpperCase()}</span>
+          <div>
+            <h3 style="margin: 0; font-size: 13.5px;">${escapeHtml(f.name)}</h3>
+            <span class="meta">${formatBytes(f.size)}</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn preview-file-btn" data-path="${escapeHtml(f.rel_path)}" data-name="${escapeHtml(f.name)}">View</button>
+          <a class="btn btn-primary" href="${href}" download="${escapeHtml(f.name)}">Download</a>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  workspaceFilesList.querySelectorAll('.preview-file-btn').forEach(btn => {
+    btn.addEventListener('click', () => previewFile(btn.dataset.path, btn.dataset.name));
+  });
+}
+
+fileFilterInput.addEventListener('input', renderWorkspaceFilesList);
 
 async function previewFile(relPath, filename) {
   try {
@@ -475,8 +524,7 @@ async function previewFile(relPath, filename) {
   }
 }
 
-// --- Connectors Modal (Matching User's Screenshot) ---
-
+// --- Connectors Screen (Matching your screenshot) ---
 async function loadConnectors() {
   try {
     const data = await api('/api/connectors');
@@ -497,33 +545,31 @@ function renderConnectorsList() {
     card.className = 'connector-card';
     card.innerHTML = `
       <div class="connector-info">
-        <div class="connector-icon-wrapper" style="color: ${c.color || '#3b82f6'};">
-          ${getConnectorIconSvg(c.id)}
+        <div class="connector-icon-wrapper">
+          ${getConnectorEmoji(c.id)}
         </div>
         <div class="connector-texts">
           <span class="connector-title">${escapeHtml(c.name)}</span>
           <span class="connector-desc">${escapeHtml(c.description)}</span>
         </div>
       </div>
-      <button class="btn-connector-toggle ${c.enabled ? 'connected' : ''}" data-id="${c.id}" title="${c.enabled ? 'Enabled (click to disable)' : 'Click to connect'}">
+      <button class="btn-connector-toggle ${c.enabled ? 'connected' : ''}" data-id="${c.id}" title="${c.enabled ? 'Connected' : 'Click to connect'}">
         ${c.enabled ? '✓' : '+'}
       </button>
     `;
 
-    const toggleBtn = card.querySelector('.btn-connector-toggle');
-    toggleBtn.addEventListener('click', () => {
+    card.querySelector('.btn-connector-toggle').addEventListener('click', () => {
       handleConnectorClick(c);
     });
 
     connectorsList.appendChild(card);
   });
 
-  activeConnectorsCount.textContent = activeCount;
+  activeConnectorsBadge.textContent = activeCount;
 }
 
 function handleConnectorClick(connector) {
   if (!connector.is_configured && connector.fields && connector.fields.length > 0) {
-    // Open credentials modal
     configConnectorId.value = connector.id;
     configConnectorName.textContent = `Connect ${connector.name}`;
     configFormFields.innerHTML = connector.fields.map(f => `
@@ -534,7 +580,6 @@ function handleConnectorClick(connector) {
     `).join('');
     connectorConfigModal.classList.add('open');
   } else {
-    // Toggle on/off directly
     toggleConnectorState(connector.id);
   }
 }
@@ -551,21 +596,39 @@ async function toggleConnectorState(connectorId) {
 }
 
 // --- Event Listeners ---
+burgerBtn.addEventListener('click', () => {
+  sidebar.classList.toggle('open');
+  scrim.classList.toggle('open');
+});
+scrim.addEventListener('click', () => {
+  sidebar.classList.remove('open');
+  scrim.classList.remove('open');
+});
 
-toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('open'));
-closeSidebarBtn.addEventListener('click', () => sidebar.classList.remove('open'));
+navChat.addEventListener('click', () => switchScreen('chat'));
+navConnectors.addEventListener('click', () => switchScreen('connectors'));
+navFiles.addEventListener('click', () => switchScreen('files'));
+
 newChatBtn.addEventListener('click', createNewSession);
 clearAllChatsBtn.addEventListener('click', clearAllChats);
 
-toggleWorkspaceBtn.addEventListener('click', () => workspaceDrawer.classList.toggle('open'));
-closeDrawerBtn.addEventListener('click', () => workspaceDrawer.classList.remove('open'));
+// Input handling
+chatInput.addEventListener('input', () => {
+  sendBtn.disabled = !chatInput.value.trim();
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + 'px';
+});
 
-// Connectors modal triggers
-openConnectorsBtn.addEventListener('click', () => { loadConnectors(); connectorsModal.classList.add('open'); });
-topConnectorsBtn.addEventListener('click', () => { loadConnectors(); connectorsModal.classList.add('open'); });
-closeConnectorsModalBtn.addEventListener('click', () => connectorsModal.classList.remove('open'));
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!sendBtn.disabled) sendMessage();
+  }
+});
 
-// Connector config modal
+sendBtn.addEventListener('click', sendMessage);
+
+// Connector configuration modal
 closeConfigModalBtn.addEventListener('click', () => connectorConfigModal.classList.remove('open'));
 cancelConfigBtn.addEventListener('click', () => connectorConfigModal.classList.remove('open'));
 
@@ -584,11 +647,11 @@ connectorConfigForm.addEventListener('submit', async (e) => {
     connectorConfigModal.classList.remove('open');
     loadConnectors();
   } catch (err) {
-    alert('Failed to save config: ' + err.message);
+    alert('Failed to save configuration: ' + err.message);
   }
 });
 
-// Custom MCP Modal triggers
+// Custom MCP modal
 openAddMcpBtn.addEventListener('click', () => addMcpModal.classList.add('open'));
 closeAddMcpModalBtn.addEventListener('click', () => addMcpModal.classList.remove('open'));
 cancelAddMcpBtn.addEventListener('click', () => addMcpModal.classList.remove('open'));
@@ -627,22 +690,26 @@ addMcpForm.addEventListener('submit', async (e) => {
 
 closePreviewBtn.addEventListener('click', () => filePreviewModal.classList.remove('open'));
 
-// Chat Input auto-resize and Enter key
-chatInput.addEventListener('input', () => {
-  chatInput.style.height = 'auto';
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + 'px';
+// Theme Picker
+themePicker.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const val = btn.dataset.themeVal;
+    document.documentElement.setAttribute('data-theme', val);
+    localStorage.setItem('termux_agent_theme', val);
+    themePicker.querySelectorAll('button').forEach(b => {
+      b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+    });
+  });
 });
 
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+// Load saved theme
+const savedTheme = localStorage.getItem('termux_agent_theme') || 'system';
+document.documentElement.setAttribute('data-theme', savedTheme);
+themePicker.querySelectorAll('button').forEach(b => {
+  b.setAttribute('aria-pressed', b.dataset.themeVal === savedTheme ? 'true' : 'false');
 });
 
-sendBtn.addEventListener('click', sendMessage);
-
-// Initialize Application
+// Boot
 window.addEventListener('DOMContentLoaded', () => {
   loadSessions();
   loadConnectors();

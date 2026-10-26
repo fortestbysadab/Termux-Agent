@@ -46,9 +46,8 @@ class SessionSandbox:
             # Create a new process group so we can kill any child processes if timeout
             os.setsid()
             try:
-                # 50s CPU time limit, 2GB address space limit
+                # CPU time limit; do NOT set RLIMIT_AS on Android bionic as it breaks linker_cfi
                 resource.setrlimit(resource.RLIMIT_CPU, (int(timeout_seconds), int(timeout_seconds) + 5))
-                resource.setrlimit(resource.RLIMIT_AS, (2 * 1024 * 1024 * 1024, 2 * 1024 * 1024 * 1024))
             except Exception:
                 pass
 
