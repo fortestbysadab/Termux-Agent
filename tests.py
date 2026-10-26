@@ -258,6 +258,22 @@ class TestTermuxAgent(unittest.TestCase):
         finally:
             f_path.unlink(missing_ok=True)
 
+    def test_termux_heavy_package_interception(self):
+        """Verify runner intercepts heavy pip C-compilation and apt-get on Termux with immediate advisory."""
+        session = create_session(title="Interceptor Test")
+        sid = session["id"]
+        sandbox = SessionSandbox(sid)
+
+        res1 = sandbox.run_command("pip install matplotlib numpy")
+        self.assertFalse(res1["ok"])
+        self.assertIn("SVG", res1["stderr"])
+
+        res2 = sandbox.run_command("apt-get update")
+        self.assertFalse(res2["ok"])
+        self.assertIn("apt-get", res2["stderr"])
+
+        delete_session(sid)
+
     def test_agent_event_callbacks(self):
         """Verify that AgentRunner fires real-time callbacks."""
         session = create_session(title="Callback Test")

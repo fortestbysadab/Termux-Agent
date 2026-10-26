@@ -439,7 +439,7 @@ function switchScreen(screen) {
 function toggleWorkspacePanel(forceOpen = null) {
   state.workspacePanelOpen = forceOpen !== null ? forceOpen : !state.workspacePanelOpen;
   workspacePanel.classList.toggle('open', state.workspacePanelOpen);
-  workspaceScrim.classList.toggle('open', state.workspacePanelOpen && window.innerWidth <= 900);
+  workspaceScrim.classList.toggle('open', state.workspacePanelOpen && window.innerWidth <= 1024);
   toggleWorkspaceBoxBtn.classList.toggle('open', state.workspacePanelOpen);
 
   if (state.workspacePanelOpen) {
@@ -548,6 +548,11 @@ function renderSessionsList() {
 async function selectSession(sessionId) {
   state.currentSessionId = sessionId;
   renderSessionsList();
+
+  if (window.innerWidth <= 1024) {
+    sidebar.classList.remove('open');
+    scrim.classList.remove('open');
+  }
 
   try {
     const data = await api(`/api/sessions/${sessionId}`);
@@ -745,17 +750,17 @@ async function sendMessage() {
   appendMessageToDom({ role: 'user', content: text, created_at: Date.now() / 1000 });
   scrollToBottom();
 
-  // 2. Create in-flight Assistant turn with Border Beam container
+  // 2. Create in-flight Assistant turn
   const assistantTurn = document.createElement('div');
-  assistantTurn.className = 'turn border-beam-container';
+  assistantTurn.className = 'turn';
   assistantTurn.id = 'liveAssistantTurn';
   assistantTurn.innerHTML = `
-    <div class="border-beam variant-colorful"></div>
     <div class="avatar bot"><canvas id="liveBotAvatar" width="64" height="64" style="width: 100%; height: 100%; display: block;"></canvas></div>
     <div class="body">
       <div class="byline"><b>Agent</b> <time>${formatTime(Date.now() / 1000)}</time></div>
       <div id="liveToolRuns" style="display: flex; flex-direction: column; gap: 8px;"></div>
-      <div id="liveStatus" class="working" style="margin-block: 8px 12px; display: flex; align-items: center; gap: 10px;">
+      <div id="liveStatus" class="working border-beam-container" style="margin-block: 8px 12px; display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px; border-radius: 12px; background: var(--soft-bg); border: 1px solid var(--border); max-width: 100%;">
+        <div class="border-beam variant-colorful"></div>
         <div id="liveOrbContainer" style="display: inline-flex;"></div>
         <span id="liveStatusText">Thinking...</span>
       </div>
@@ -826,13 +831,14 @@ async function sendMessage() {
           if (liveStatusText) liveStatusText.textContent = data.message;
           scrollToBottom();
         } else if (eventType === 'command_start') {
-          // Display EXACT BASH command running live
+          // Display EXACT BASH command running live with sleek Border Beam on the status card
           if (liveStatus) {
             liveStatus.innerHTML = `
+              <div class="border-beam variant-colorful"></div>
               <div id="liveOrbContainer" style="display: inline-flex;"></div>
-              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <span class="filechip" style="background: var(--accent-soft); color: var(--accent);">$ BASH</span>
-                <code style="font-weight: 600; font-size: 13px; color: var(--fg); background: var(--soft-bg); padding: 3px 8px; border-radius: 6px;">${escapeHtml(data.command)}</code>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow: hidden; max-width: 100%;">
+                <span class="filechip" style="background: var(--accent-soft); color: var(--accent); flex-shrink: 0;">$ BASH</span>
+                <code style="font-weight: 600; font-size: 12px; color: var(--fg); background: var(--surface); padding: 2px 7px; border-radius: 6px; word-break: break-all;">${escapeHtml(data.command)}</code>
               </div>
             `;
             const orbBox = document.getElementById('liveOrbContainer');
@@ -938,11 +944,6 @@ async function sendMessage() {
         } else if (eventType === 'done') {
           if (liveStatus) liveStatus.remove();
           if (activeOrb) activeOrb.stop();
-
-          // Remove border beam from turn now that work is complete
-          const beam = assistantTurn.querySelector('.border-beam');
-          if (beam) beam.remove();
-          assistantTurn.classList.remove('border-beam-container');
 
           if (liveAvatar) liveAvatar.setState('default');
           if (globalBotAvatar) globalBotAvatar.setState('default');

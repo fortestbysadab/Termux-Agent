@@ -22,6 +22,37 @@ class SessionSandbox:
 
     def run_command(self, command: str, timeout_seconds: float = 60.0) -> dict[str, Any]:
         """Execute a shell command inside the isolated session workspace."""
+        cmd_clean = command.strip().lower()
+
+        # Intercept Debian 'apt-get' on Android/Termux
+        if cmd_clean.startswith("apt-get ") or " apt-get " in cmd_clean:
+            return {
+                "stdout": "",
+                "stderr": "Advisory: 'apt-get' is not available on Android/Termux. Use 'pkg install <pkg>' or pure Python solutions.",
+                "exit_code": 1,
+                "duration_ms": 5,
+                "timed_out": False,
+                "ok": False,
+            }
+
+        # Intercept heavy C/C++ source compilation via pip that causes timeouts on Android
+        if ("pip install" in cmd_clean or "pip3 install" in cmd_clean) and any(
+            pkg in cmd_clean for pkg in ("matplotlib", "scipy", "pandas", "scikit-learn", "torch", "cv2", "opencv")
+        ):
+            return {
+                "stdout": "",
+                "stderr": (
+                    "Termux Environment Notice: Compiling heavy C/C++ packages (matplotlib, scipy, pandas) from source "
+                    "via pip times out on Android ARM64 devices.\n"
+                    "-> For charts, plots, and visualizations: Generate clean, colorful, high-resolution SVG (.svg) or HTML5 Canvas "
+                    "directly in Python using standard libraries. SVG charts are instant, vector-crisp, and have zero dependencies."
+                ),
+                "exit_code": 1,
+                "duration_ms": 10,
+                "timed_out": False,
+                "ok": False,
+            }
+
         start_time = time.monotonic()
         
         # Build safe environment
