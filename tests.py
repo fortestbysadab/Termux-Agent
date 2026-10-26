@@ -228,6 +228,36 @@ class TestTermuxAgent(unittest.TestCase):
         delete_session(sid1)
         delete_session(sid2)
 
+    def test_scratch_cleanup_and_deliverable_isolation(self):
+        """Ensure scratch test files (e.g. test.xlsx) and helper scripts are identified and cleaned when deliverables exist."""
+        from agent.loop import is_scratch_file, is_primary_deliverable
+
+        self.assertTrue(is_scratch_file("test.xlsx"))
+        self.assertTrue(is_scratch_file("test_dummy.txt"))
+        self.assertTrue(is_scratch_file("generate_sheets.py"))
+        self.assertTrue(is_scratch_file("temp.csv"))
+
+        self.assertTrue(is_primary_deliverable("7_day_study_habit_plan.xlsx"))
+        self.assertTrue(is_primary_deliverable("neuroscience_overview.pdf"))
+        self.assertFalse(is_primary_deliverable("test.xlsx"))
+
+    def test_spreadsheet_parser(self):
+        """Test the spreadsheet parser on CSV and XLSX formats."""
+        from web.server import parse_spreadsheet_data
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".csv", delete=False) as f:
+            f.write("Day,Task,Status\nDay 1,Study Python,Done\nDay 2,Review,Pending\n")
+            f_path = Path(f.name)
+
+        try:
+            data = parse_spreadsheet_data(f_path)
+            self.assertEqual(data["type"], "spreadsheet")
+            self.assertEqual(len(data["sheets"][0]["rows"]), 3)
+            self.assertEqual(data["sheets"][0]["rows"][0], ["Day", "Task", "Status"])
+        finally:
+            f_path.unlink(missing_ok=True)
+
     def test_agent_event_callbacks(self):
         """Verify that AgentRunner fires real-time callbacks."""
         session = create_session(title="Callback Test")

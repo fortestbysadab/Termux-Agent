@@ -30,6 +30,77 @@ from sandbox.tracker import snapshot_workspace
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+def parse_spreadsheet_data(target: Path) -> dict:
+    ext = target.suffix.lower()
+    if ext == ".csv":
+        import csv
+        try:
+            with open(target, "r", encoding="utf-8", errors="replace") as f:
+                reader = csv.reader(f)
+                rows = [row for row in reader]
+            return {
+                "type": "spreadsheet",
+                "filename": target.name,
+                "sheets": [{"name": target.name, "rows": rows[:200]}]
+            }
+        except Exception as e:
+            return {"type": "error", "error": f"Failed to parse CSV: {str(e)}"}
+    elif ext in (".xlsx", ".xlsm"):
+        # First try openpyxl if installed
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(target, data_only=True)
+            sheets = []
+            for sheet_name in wb.sheetnames[:5]:
+                ws = wb[sheet_name]
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    if any(c is not None for c in row):
+                        rows.append([str(c) if c is not None else "" for c in row])
+                sheets.append({"name": sheet_name, "rows": rows[:200]})
+            return {
+                "type": "spreadsheet",
+                "filename": target.name,
+                "sheets": sheets
+            }
+        except Exception:
+            pass
+
+        # Fallback to zero-dependency zipfile + xml parser
+        try:
+            import zipfile, xml.etree.ElementTree as ET
+            with zipfile.ZipFile(target) as z:
+                shared_strings = []
+                if "xl/sharedStrings.xml" in z.namelist():
+                    tree = ET.fromstring(z.read("xl/sharedStrings.xml"))
+                    for si in tree.findall(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si") or tree.findall(".//si"):
+                        t = si.find(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t") or si.find(".//t")
+                        shared_strings.append(t.text if t is not None and t.text else "")
+
+                rows = []
+                if "xl/worksheets/sheet1.xml" in z.namelist():
+                    tree = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+                    ns = {"ns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                    for r in tree.findall(".//ns:row", ns) or tree.findall(".//row"):
+                        row_vals = []
+                        for c in r.findall("./ns:c", ns) or r.findall("./c"):
+                            v = c.find("./ns:v", ns) or c.find("./v")
+                            val = v.text if v is not None and v.text else ""
+                            if c.attrib.get("t") == "s" and val.isdigit():
+                                idx = int(val)
+                                if idx < len(shared_strings):
+                                    val = shared_strings[idx]
+                            row_vals.append(val)
+                        rows.append(row_vals)
+                return {
+                    "type": "spreadsheet",
+                    "filename": target.name,
+                    "sheets": [{"name": "Sheet1", "rows": rows[:200]}]
+                }
+        except Exception as e:
+            return {"type": "error", "error": f"Failed to parse xlsx: {str(e)}"}
+    return {"type": "unknown"}
+
 class AgentHttpHandler(BaseHTTPRequestHandler):
     runner: AgentRunner
     connector_manager: ConnectorManager
@@ -140,6 +211,75 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
                 self.wfile.write(data)
+                return
+
+            elif len(parts) >= 4 and parts[3] == "preview":
+                session_id = parts[2]
+                rel_path = query.get("path", [""])[0]
+                if not rel_path or ".." in rel_path:
+                    self._json(400, {"error": "Invalid file path"})
+                    return
+                sbx = SessionSandbox(session_id)
+                target = (sbx.workspace_dir / rel_path).resolve()
+                if not target.is_file() or not target.is_relative_to(sbx.workspace_dir):
+                    self._json(404, {"error": "File not found"})
+                    return
+
+                ext = target.suffix.lower()
+                if ext in (".xlsx", ".xlsm", ".csv", ".tsv"):
+                    sheet_data = parse_spreadsheet_data(target)
+                    self._json(200, sheet_data)
+                    return
+                elif ext == ".pdf":
+                    self._json(200, {
+                        "type": "pdf",
+                        "filename": target.name,
+                        "size": target.stat().st_size,
+                        "file_url": f"/api/workspace/{session_id}/file?path={urllib.parse.quote(rel_path)}",
+                    })
+                    return
+                elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"):
+                    self._json(200, {
+                        "type": "image",
+                        "filename": target.name,
+                        "file_url": f"/api/workspace/{session_id}/file?path={urllib.parse.quote(rel_path)}",
+                    })
+                    return
+                else:
+                    try:
+                        text_content = target.read_text(encoding="utf-8", errors="replace")
+                        self._json(200, {
+                            "type": "text",
+                            "filename": target.name,
+                            "content": text_content,
+                        })
+                    except Exception as e:
+                        self._json(500, {"error": str(e)})
+                    return
+
+            elif len(parts) >= 4 and parts[3] == "zip":
+                # Download full session workspace as ZIP
+                session_id = parts[2]
+                sbx = SessionSandbox(session_id)
+                import io, zipfile
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for root, dirs, files in os.walk(sbx.workspace_dir):
+                        for file in files:
+                            if file.startswith("."):
+                                continue
+                            full_p = Path(root) / file
+                            rel_p = full_p.relative_to(sbx.workspace_dir)
+                            zf.write(full_p, str(rel_p))
+                buf.seek(0)
+                zip_data = buf.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(zip_data)))
+                self.send_header("Content-Disposition", f'attachment; filename="workspace_{session_id[:8]}.zip"')
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(zip_data)
                 return
 
         self._json(404, {"error": "Endpoint not found"})

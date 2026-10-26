@@ -22,8 +22,11 @@ CAPABILITIES:
 
 WORKFLOW RULES:
 - If the user asks for a file (document, script, CSV, HTML, analysis, code), ALWAYS write/create the file in the workspace using terminal commands.
-- When generating documents, media, or data files (e.g. PDF, Excel, HTML, CSV, PNG) via Python or Bash:
-  Execute your python code directly (e.g. `python3 -c "..."` or run a script) and ensure the target deliverable file (e.g. `demo_document.pdf`) is created in the current directory. Avoid leaving unnecessary scratch generator scripts if possible.
+- STRICT FILE DISCIPLINE:
+  1. Output the final requested deliverable file directly in the workspace root (e.g. `7_day_study_habit_plan.xlsx`, `neuroscience_overview.pdf`).
+  2. NEVER create scratch test files (such as `test.xlsx`, `test.pdf`, `dummy.txt`) in the workspace root. If you need temporary files, write them into `.tmp/` or delete them before completing the turn (`rm -f test.*`).
+  3. Clean up helper generator scripts (e.g. `generate_sheets.py`, `generate_pdf.py`). Execute code via `python3 -c "..."` or remove the script after running (`rm -f generate_*.py`).
+  4. Only the exact asking deliverable files should remain in the workspace.
 - If the task is purely conversational or an inquiry without file requests, answer directly in chat.
 - After running terminal commands, explain the results clearly. Be concise, direct, and helpful.
 """
@@ -41,6 +44,26 @@ SCRIPT_EXTENSIONS = frozenset({
     ".py", ".sh", ".bash", ".zsh", ".js", ".ts", ".rb", ".php", ".pl",
 })
 
+def is_scratch_file(rel_path: str) -> bool:
+    """Identify temporary scratch, helper generator scripts, or test files."""
+    p = Path(rel_path)
+    name = p.name.lower()
+    ext = p.suffix.lower()
+    if ext in (".tmp", ".bak", ".swp", ".pyc"):
+        return True
+    if any(name.startswith(pfx) for pfx in ("test.", "test_", "test1.", "test2.", "temp.", "temp_", "tmp.", "scratch.", "dummy.", "dummy_")):
+        return True
+    if any(name.startswith(pfx) for pfx in ("gen_", "generate_", "create_", "make_", "build_", "run_", "script.")) and ext in (".py", ".sh", ".bash", ".js"):
+        return True
+    return False
+
+def is_primary_deliverable(rel_path: str) -> bool:
+    """Identify if a file is a finished user deliverable (document, media, spreadsheet, data)."""
+    p = Path(rel_path)
+    if is_scratch_file(rel_path):
+        return False
+    return p.suffix.lower() in DELIVERABLE_EXTENSIONS
+
 def filter_chat_artifacts(changed_files: list[str], user_text: str = "") -> list[str]:
     """Filter intermediate build/generator scripts out of chat deliverable cards when a deliverable exists.
     All files remain saved and accessible in the Workspace Files view ('all files means all files')."""
@@ -57,17 +80,9 @@ def filter_chat_artifacts(changed_files: list[str], user_text: str = "") -> list
     scripts = []
 
     for f in changed_files:
-        p = Path(f)
-        ext = p.suffix.lower()
-        name_lower = p.name.lower()
-        is_scratch_name = any(
-            name_lower.startswith(prefix)
-            for prefix in ("gen_", "generate_", "create_", "make_", "build_", "temp_", "scratch_", "test_")
-        )
-
-        if ext in DELIVERABLE_EXTENSIONS and not is_scratch_name:
+        if is_primary_deliverable(f):
             deliverables.append(f)
-        elif ext in SCRIPT_EXTENSIONS or is_scratch_name:
+        elif is_scratch_file(f):
             scripts.append(f)
         else:
             deliverables.append(f)
@@ -242,6 +257,25 @@ class AgentRunner:
         after_snap = snapshot_workspace(sandbox.workspace_dir)
         changes = diff_workspace(before_snap, after_snap)
         changed_files = changes["all_changed"]
+
+        # Check if primary deliverables were generated
+        primary_deliverables = [f for f in changed_files if is_primary_deliverable(f)]
+
+        # If primary deliverables exist, automatically clean scratch and test files from the workspace
+        # (e.g., delete test.xlsx, generate_*.py so only asking files remain saved in the workspace)
+        if primary_deliverables:
+            cleaned_changed = []
+            for rel in changed_files:
+                if is_scratch_file(rel):
+                    f_to_del = sandbox.workspace_dir / rel
+                    try:
+                        if f_to_del.is_file():
+                            f_to_del.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                else:
+                    cleaned_changed.append(rel)
+            changed_files = cleaned_changed
 
         # Record generated artifacts in database (all files tracked for workspace files view)
         artifacts_meta = []

@@ -1,26 +1,33 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en" data-theme="system">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="light dark">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Termux Agent</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="app" id="root">
+  <div class="app">
     <!-- Sidebar -->
     <aside class="side" id="sidebar">
-      <div class="sidehead">
-        <div class="mark">T</div>
-        <b>Termux Agent</b>
+      <div class="brand">
+        <div class="brand-title">
+          <div class="bot-avatar-wrap" id="brandBotAvatarWrap">
+            <canvas id="brandBotAvatar" width="64" height="64"></canvas>
+          </div>
+          <span>Termux Agent</span>
+        </div>
       </div>
 
-      <button class="newchat" id="newChatBtn">
-        <span>+</span> New chat
+      <button class="newchat-btn" id="newChatBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        New chat
       </button>
 
-      <nav class="nav">
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs">
         <button id="navChat" class="nav-tab active" aria-current="page">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -71,9 +78,16 @@
           </svg>
         </button>
         <h1 id="topbarTitle">New chat</h1>
-        <div class="status">
-          <span class="dot"></span>
-          <span>Sandbox ready</span>
+
+        <div class="topbar-actions">
+          <!-- Arena-style Workspace Toggle Button with badge -->
+          <button class="btn btn-workspace-toggle" id="toggleWorkspaceBoxBtn" title="Open Session Workspace Box">
+            📁 Workspace <span class="count" id="topbarWorkspaceCount">0</span>
+          </button>
+          <div class="status">
+            <span class="dot"></span>
+            <span>Sandbox ready</span>
+          </div>
         </div>
       </header>
 
@@ -92,51 +106,99 @@
             ></textarea>
             <div class="shellfoot">
               <span class="hint">Press Enter to send, Shift+Enter for newline</span>
-              <button class="send" id="sendBtn" title="Send message" disabled>
+              <button class="sendbtn" id="sendBtn" title="Send message" disabled>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                   <path d="M12 4l-8 8h5v8h6v-8h5z"/>
                 </svg>
               </button>
             </div>
           </div>
-          <div class="privacy">
+          <div class="privacy" style="font-size: 11px; color: var(--muted); text-align: center; margin-top: 6px;">
             <span>⚡ Isolated per-session /workspace sandbox</span>
           </div>
         </div>
       </section>
 
-      <!-- Screen 2: Connectors Screen (Matching your screenshots) -->
+      <!-- Screen 2: Connectors Screen -->
       <section class="screen hidden" id="connectorsScreen">
-        <div class="cards">
-          <div class="card" style="margin-block-end: 12px;">
-            <h3>Connectors & Custom MCP</h3>
-            <p class="meta">Connect third-party apps and Model Context Protocol servers to use in Agent chats.</p>
-          </div>
+        <div class="screen-header">
+          <h2>Connectors & Custom MCP</h2>
+          <p>Connect third-party apps and Model Context Protocol servers to use in Agent chats.</p>
+        </div>
 
-          <div id="connectorsList"></div>
+        <div class="connectors-grid" id="connectorsList"></div>
 
-          <!-- Custom MCP Box -->
-          <div class="custom-mcp-section">
-            <h3>Custom MCP Server</h3>
-            <p>Connect any Model Context Protocol server via local stdio command or remote SSE endpoint.</p>
-            <button class="btn btn-primary" id="openAddMcpBtn">+ Add Custom MCP Server</button>
-          </div>
+        <!-- Custom MCP Section -->
+        <div class="custom-mcp-section">
+          <h3>Custom MCP Connector</h3>
+          <p>Connect your own Model Context Protocol server via local stdio command (e.g. <code>npx -y @modelcontextprotocol/server-postgres</code>) or remote HTTP/SSE endpoint.</p>
+          <button class="btn btn-primary" id="openAddMcpBtn">+ Add Custom MCP Server</button>
         </div>
       </section>
 
       <!-- Screen 3: Workspace Files Screen -->
       <section class="screen hidden" id="filesScreen">
-        <input class="filter" id="fileFilterInput" placeholder="Filter session files..." />
-        <div class="cards" id="workspaceFilesList">
-          <div class="empty">No files generated yet in this session. Ask the agent to create a script, report, or document.</div>
+        <div class="screen-header">
+          <h2>Workspace Files</h2>
+          <p>Files created or modified in this session's isolated sandbox directory.</p>
         </div>
+
+        <input type="text" id="fileFilterInput" class="filter" placeholder="Filter files by name...">
+        <div id="workspaceFilesList" class="card-grid"></div>
       </section>
+
+      <!-- Arena-Style Per-Session Workspace Box Panel -->
+      <aside class="workspace-panel" id="workspacePanel">
+        <div class="workspace-panel-head">
+          <div class="workspace-title-row">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 16px;">📁</span>
+              <span class="workspace-panel-title">Workspace</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <a id="downloadWorkspaceZipBtn" class="btn-icon" title="Download workspace as ZIP">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </a>
+              <button id="closeWorkspacePanelBtn" class="btn-icon" title="Close panel">✕</button>
+            </div>
+          </div>
+          <div class="workspace-quota" id="workspaceQuotaText">0 KB / 128.0 MB · 0 files</div>
+        </div>
+
+        <div class="workspace-section">
+          <div class="workspace-section-title">
+            <span>Processes</span>
+            <span class="count">1</span>
+          </div>
+          <div class="process-card">
+            <span class="process-dot"></span>
+            <span class="process-name">Termux Agent Server</span>
+            <span class="process-port">:8080</span>
+          </div>
+        </div>
+
+        <div class="workspace-section" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+          <div class="workspace-section-title">
+            <span>Session Files</span>
+            <span class="count" id="workspaceBoxFileCount">0</span>
+          </div>
+          <div class="workspace-tree scroll" id="workspaceBoxFileList">
+            <div style="padding: 14px 0; color: var(--muted); font-size: 12px; text-align: center;">No files in session workspace.</div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="scrim" id="workspaceScrim"></div>
     </main>
   </div>
 
   <!-- Connector Config Modal -->
   <div class="modal-backdrop" id="connectorConfigModal">
-    <div class="modal-card modal-sm">
+    <div class="modal-card">
       <div class="modal-header">
         <h2 id="configConnectorName">Configure Connector</h2>
         <button class="btn-icon" id="closeConfigModalBtn">✕</button>
@@ -156,7 +218,7 @@
 
   <!-- Add Custom MCP Modal -->
   <div class="modal-backdrop" id="addMcpModal">
-    <div class="modal-card modal-sm">
+    <div class="modal-card">
       <div class="modal-header">
         <h2>Add Custom MCP Server</h2>
         <button class="btn-icon" id="closeAddMcpModalBtn">✕</button>
@@ -164,23 +226,23 @@
       <div class="modal-body">
         <form id="addMcpForm">
           <div class="form-group">
-            <label for="mcpName">Connector Name</label>
-            <input type="text" id="mcpName" placeholder="e.g. Postgres DB, My API" required>
+            <label for="mcpName">Server Name</label>
+            <input type="text" id="mcpName" placeholder="e.g. PostgreSQL, Local Docker" required>
           </div>
           <div class="form-group">
-            <label for="mcpKind">Transport</label>
+            <label for="mcpKind">Transport Protocol</label>
             <select id="mcpKind">
-              <option value="mcp_stdio">Stdio Command (Local CLI / npx / python)</option>
-              <option value="mcp_sse">Streamable HTTP / SSE Endpoint (Remote URL)</option>
+              <option value="mcp_stdio">Standard I/O (Local Process)</option>
+              <option value="mcp_sse">Server-Sent Events (HTTP/SSE)</option>
             </select>
           </div>
           <div class="form-group" id="mcpCommandGroup">
-            <label for="mcpCommand">Command</label>
+            <label for="mcpCommand">Shell Command</label>
             <input type="text" id="mcpCommand" placeholder="e.g. npx -y @modelcontextprotocol/server-postgres">
           </div>
           <div class="form-group hidden" id="mcpUrlGroup">
-            <label for="mcpUrl">SSE / HTTP URL</label>
-            <input type="url" id="mcpUrl" placeholder="https://mcp.mycompany.com/sse">
+            <label for="mcpUrl">SSE Endpoint URL</label>
+            <input type="url" id="mcpUrl" placeholder="https://example.com/sse">
           </div>
           <div class="form-group">
             <label for="mcpDescription">Description (Optional)</label>
@@ -195,7 +257,7 @@
     </div>
   </div>
 
-  <!-- File Preview Modal -->
+  <!-- Rich File Preview Modal (Spreadsheets, PDFs, Images, Code) -->
   <div class="modal-backdrop" id="filePreviewModal">
     <div class="modal-card modal-lg">
       <div class="modal-header">
@@ -206,9 +268,17 @@
         </div>
       </div>
       <div class="modal-body">
-        <pre class="prose pre" id="previewFileContent" style="white-space: pre-wrap; font-size: 13px; max-height: 60vh;"></pre>
-        <iframe id="previewFileIframe" style="width: 100%; height: 65vh; border: 1px solid var(--border); border-radius: 8px; display: none; background: #fff;"></iframe>
+        <!-- Spreadsheet Preview Container -->
+        <div id="previewSpreadsheetContainer" style="display: none;"></div>
+
+        <!-- PDF Preview Card Container -->
+        <div id="previewPdfContainer" style="display: none;"></div>
+
+        <!-- Media / Images Preview Container -->
         <div id="previewMediaContainer" style="display: none; text-align: center; padding: 10px;"></div>
+
+        <!-- Text / Code Preview Container -->
+        <pre class="prose pre" id="previewFileContent" style="white-space: pre-wrap; font-size: 13px; max-height: 60vh;"></pre>
       </div>
     </div>
   </div>
