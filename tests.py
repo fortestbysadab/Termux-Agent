@@ -23,6 +23,12 @@ from sandbox.runner import SessionSandbox
 from sandbox.tracker import snapshot_workspace, diff_workspace
 from connectors.manager import ConnectorManager
 from agent.loop import AgentRunner
+from agent.planner import (
+    parse_provider_error,
+    adapt_tools_for_gemini,
+    adapt_messages_for_gemini,
+    LLMPlanner,
+)
 
 class TestTermuxAgent(unittest.TestCase):
     def setUp(self):
@@ -77,6 +83,23 @@ class TestTermuxAgent(unittest.TestCase):
         # Clean up
         delete_session(sid)
 
+    def test_bionic_cfi_safe_sandbox(self):
+        """Ensure sandbox does not set RLIMIT_AS which triggers bionic linker CFI crashes."""
+        session = create_session(title="Bionic Test")
+        sid = session["id"]
+        sandbox = SessionSandbox(sid)
+
+        # Execute multiple commands sequentially
+        res1 = sandbox.run_command("echo 42")
+        self.assertEqual(res1["exit_code"], 0)
+        self.assertIn("42", res1["stdout"])
+
+        res2 = sandbox.run_command("exit 3")
+        self.assertEqual(res2["exit_code"], 3)
+        self.assertFalse(res2["ok"])
+
+        delete_session(sid)
+
     def test_connectors_manager(self):
         manager = ConnectorManager()
         summary = manager.get_all_connectors_summary()
@@ -94,6 +117,77 @@ class TestTermuxAgent(unittest.TestCase):
 
         # Untoggle
         toggle_connector("github", enabled=False)
+
+    def test_parse_provider_error(self):
+        """Test structured error parser generates actionable advice for common LLM errors."""
+        # 1. Thought signature error
+        err1 = parse_provider_error(400, '{"error": {"message": "Function call is missing a thought_signature in functionCall parts"}}')
+        self.assertIn("thought signature", err1["title"].lower())
+        self.assertTrue(len(err1["remedy"]) > 0)
+
+        # 2. Quota limit
+        err2 = parse_provider_error(429, '{"error": "Rate limit exceeded"}')
+        self.assertEqual(err2["title"], "Quota / Rate Limit Exceeded")
+
+        # 3. Invalid API key
+        err3 = parse_provider_error(401, '{"error": "Unauthorized"}')
+        self.assertEqual(err3["title"], "Authentication Failed")
+
+    def test_gemini_message_adaptation(self):
+        """Verify Gemini thought_signature and tool schema adaptation."""
+        raw_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "description": "Run command",
+                    "parameters": {
+                        "type": "object",
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                        "properties": {
+                            "command": {"type": "string", "description": "The command"}
+                        },
+                        "required": ["command"]
+                    }
+                }
+            }
+        ]
+        sanitized = adapt_tools_for_gemini(raw_tools)
+        self.assertNotIn("$schema", sanitized[0]["function"]["parameters"])
+
+        # Test tool response adaptation (removes 'name' to satisfy strict OpenAI endpoint requirements)
+        messages = [
+            {"role": "user", "content": "run ls"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "terminal", "arguments": '{"command":"ls"}'}}],
+                "extra_content": {"google": {"thought_signature": "sig123"}}
+            },
+            {"role": "tool", "tool_call_id": "call_1", "name": "terminal", "content": "file1.txt"}
+        ]
+        adapted = adapt_messages_for_gemini(messages)
+        self.assertNotIn("name", adapted[2])
+        self.assertEqual(adapted[1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "sig123")
+
+    def test_agent_event_callbacks(self):
+        """Verify that AgentRunner fires real-time callbacks."""
+        session = create_session(title="Callback Test")
+        sid = session["id"]
+
+        manager = ConnectorManager()
+        runner = AgentRunner(manager)
+        events = []
+
+        def on_event(event_type, data):
+            events.append((event_type, data))
+
+        result = runner.run_turn(sid, "hello", callback=on_event)
+        self.assertTrue(len(events) > 0)
+        # Verify done or error event was emitted
+        event_types = [e[0] for e in events]
+        self.assertTrue("done" in event_types or "error" in event_types)
+        delete_session(sid)
 
 if __name__ == "__main__":
     unittest.main()

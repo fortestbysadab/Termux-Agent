@@ -1,4 +1,4 @@
-// Termux Agent — Clean Frontend Client matching Android Agent Design
+// Termux Agent — Clean Frontend Client matching Android Agent Design with Real-time Command & Error Streaming
 
 const state = {
   currentSessionId: null,
@@ -346,7 +346,7 @@ function appendMessageToDom(msg) {
               ${statusBadge} ▾
             </span>
           </div>
-          <div class="filepreview hidden" style="padding: 12px 14px; background: var(--soft-bg); font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto;">${escapeHtml(output || 'No output')}</div>
+          <div class="filepreview" style="padding: 12px 14px; background: var(--soft-bg); font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto;">${escapeHtml(output || 'No output')}</div>
         </div>
       `;
     }).join('');
@@ -402,7 +402,7 @@ function scrollToBottom() {
   threadContainer.scrollTop = threadContainer.scrollHeight;
 }
 
-// --- Send Message ---
+// --- Real-time Streaming Send Message ---
 async function sendMessage() {
   const text = chatInput.value.trim();
   if (!text || !state.currentSessionId) return;
@@ -411,49 +411,225 @@ async function sendMessage() {
   chatInput.style.height = 'auto';
   sendBtn.disabled = true;
 
-  // Optimistically append user turn
+  // 1. Optimistically append user turn
   appendMessageToDom({ role: 'user', content: text, created_at: Date.now() / 1000 });
   scrollToBottom();
 
-  // Show working indicator
-  const workingEl = document.createElement('div');
-  workingEl.className = 'turn';
-  workingEl.id = 'workingTurn';
-  workingEl.innerHTML = `
+  // 2. Create in-flight Assistant turn
+  const assistantTurn = document.createElement('div');
+  assistantTurn.className = 'turn';
+  assistantTurn.id = 'liveAssistantTurn';
+  assistantTurn.innerHTML = `
     <div class="avatar bot">T</div>
     <div class="body">
-      <div class="working">
-        <span>Running in isolated workspace</span>
+      <div class="byline"><b>Agent</b> <time>${formatTime(Date.now() / 1000)}</time></div>
+      <div id="liveToolRuns" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      <div id="liveStatus" class="working" style="margin-block: 8px 12px;">
+        <span>Thinking...</span>
         <div class="dots"><span></span><span></span><span></span></div>
       </div>
+      <div class="prose" id="liveProse"></div>
+      <div id="liveArtifacts"></div>
     </div>
   `;
-  messagesList.appendChild(workingEl);
+  messagesList.appendChild(assistantTurn);
   scrollToBottom();
 
+  const liveToolRuns = document.getElementById('liveToolRuns');
+  const liveStatus = document.getElementById('liveStatus');
+  const liveProse = document.getElementById('liveProse');
+  const liveArtifacts = document.getElementById('liveArtifacts');
+
   try {
-    const outcome = await api('/api/chat', {
+    const resp = await fetch('/api/chat', {
       method: 'POST',
-      body: JSON.stringify({ session_id: state.currentSessionId, text }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: state.currentSessionId, text, stream: true }),
     });
 
-    const currWorking = document.getElementById('workingTurn');
-    if (currWorking) currWorking.remove();
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
 
-    appendMessageToDom(outcome.message);
-    scrollToBottom();
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    loadWorkspaceFiles();
-    loadSessions();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop(); // keep last incomplete chunk
+
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let eventType = 'message';
+        let dataStr = '';
+
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            dataStr = line.slice(6).trim();
+          }
+        }
+
+        if (!dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch { continue; }
+
+        if (eventType === 'status') {
+          if (liveStatus) {
+            liveStatus.innerHTML = `
+              <span>${escapeHtml(data.message)}</span>
+              <div class="dots"><span></span><span></span><span></span></div>
+            `;
+          }
+          scrollToBottom();
+        } else if (eventType === 'command_start') {
+          // Prominently show EXACT command running live
+          if (liveStatus) {
+            liveStatus.innerHTML = `
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span class="filechip" style="background: var(--accent-soft); color: var(--accent);">$ BASH</span>
+                <code style="font-weight: 600; font-size: 13px; color: var(--fg); background: var(--soft-bg); padding: 3px 8px; border-radius: 6px;">${escapeHtml(data.command)}</code>
+                <div class="dots"><span></span><span></span><span></span></div>
+              </div>
+            `;
+          }
+          scrollToBottom();
+        } else if (eventType === 'command_done') {
+          const isOk = data.ok !== false;
+          const statusBadge = `Exit ${data.exit_code}`;
+          const output = `${data.stdout || ''}${data.stderr ? '\n' + data.stderr : ''}`;
+
+          const card = document.createElement('div');
+          card.className = 'filecard';
+          card.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+          card.innerHTML = `
+            <div class="filecard-head" style="cursor: pointer;">
+              <span class="filechip" style="background: ${isOk ? 'var(--accent-soft)' : 'color-mix(in srgb, var(--danger) 15%, transparent)'}; color: ${isOk ? 'var(--accent)' : 'var(--danger)'};">
+                $ BASH
+              </span>
+              <span class="filename" style="font-weight: 550;">${escapeHtml(data.command)}</span>
+              <span class="opens" style="color: ${isOk ? 'var(--ok)' : 'var(--danger)'}; font-size: 11px;">
+                ${statusBadge} ▾
+              </span>
+            </div>
+            <div class="filepreview" style="padding: 12px 14px; background: var(--soft-bg); font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto;">${escapeHtml(output || 'No output')}</div>
+          `;
+          card.querySelector('.filecard-head').addEventListener('click', () => {
+            card.querySelector('.filepreview').classList.toggle('hidden');
+          });
+
+          if (liveToolRuns) liveToolRuns.appendChild(card);
+          if (liveStatus) liveStatus.innerHTML = `<span>Processing results...</span><div class="dots"><span></span><span></span><span></span></div>`;
+          scrollToBottom();
+        } else if (eventType === 'connector_start') {
+          if (liveStatus) {
+            liveStatus.innerHTML = `
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="filechip" style="background: var(--accent-soft); color: var(--accent);">🔌 MCP</span>
+                <b>${escapeHtml(data.tool)}</b>
+                <div class="dots"><span></span><span></span><span></span></div>
+              </div>
+            `;
+          }
+          scrollToBottom();
+        } else if (eventType === 'connector_done') {
+          const isOk = data.ok !== false;
+          const card = document.createElement('div');
+          card.className = 'filecard';
+          card.innerHTML = `
+            <div class="filecard-head" style="cursor: pointer;">
+              <span class="filechip">🔌 MCP</span>
+              <span class="filename">${escapeHtml(data.tool)}</span>
+              <span class="opens" style="color: ${isOk ? 'var(--ok)' : 'var(--danger)'}; font-size: 11px;">
+                ${isOk ? 'OK' : 'Error'} ▾
+              </span>
+            </div>
+            <div class="filepreview hidden" style="padding: 12px 14px; background: var(--soft-bg); font-size: 12px; white-space: pre-wrap;">${escapeHtml(JSON.stringify(data.result, null, 2))}</div>
+          `;
+          card.querySelector('.filecard-head').addEventListener('click', () => {
+            card.querySelector('.filepreview').classList.toggle('hidden');
+          });
+          if (liveToolRuns) liveToolRuns.appendChild(card);
+          scrollToBottom();
+        } else if (eventType === 'error') {
+          // PROMINENT ERROR CARD ON SCREEN
+          if (liveStatus) liveStatus.remove();
+          const errCard = document.createElement('div');
+          errCard.className = 'filecard';
+          errCard.style.borderColor = 'var(--danger)';
+          errCard.style.background = 'color-mix(in srgb, var(--danger) 8%, var(--surface))';
+          errCard.innerHTML = `
+            <div style="padding: 14px 16px;">
+              <div style="display: flex; align-items: center; gap: 8px; color: var(--danger); font-weight: 650; margin-block-end: 6px;">
+                <span>⚠️</span> <span>${escapeHtml(data.title || 'Error')}</span>
+              </div>
+              <div style="font-size: 13.5px; line-height: 1.5; color: var(--fg);">${escapeHtml(data.message)}</div>
+              ${data.remedy ? `<div style="font-size: 12.5px; color: var(--muted); margin-block-start: 8px;"><b>Fix:</b> ${escapeHtml(data.remedy)}</div>` : ''}
+              ${data.raw ? `
+                <details style="margin-block-start: 10px; font-size: 11px;">
+                  <summary style="cursor: pointer; color: var(--muted);">View raw details</summary>
+                  <pre style="margin-block-start: 6px; padding: 8px; background: var(--soft-bg); border-radius: 6px; overflow-x: auto;">${escapeHtml(data.raw)}</pre>
+                </details>
+              ` : ''}
+            </div>
+          `;
+          if (liveProse) liveProse.appendChild(errCard);
+          scrollToBottom();
+        } else if (eventType === 'done') {
+          if (liveStatus) liveStatus.remove();
+          const msg = data.message || {};
+          if (liveProse) liveProse.innerHTML = renderMarkdown(msg.content);
+
+          if (data.files_generated && data.files_generated.length > 0 && liveArtifacts) {
+            liveArtifacts.innerHTML = data.files_generated.map(file => {
+              const name = typeof file === 'string' ? file : file.filename;
+              const relPath = typeof file === 'string' ? file : file.rel_path;
+              const ext = name.split('.').pop() || 'file';
+              const size = file.size_bytes ? formatBytes(file.size_bytes) : '';
+              const href = `/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}`;
+
+              return `
+                <div class="filecard">
+                  <div class="filecard-head">
+                    <span class="filechip">${ext.toUpperCase()}</span>
+                    <span class="filename">${escapeHtml(name)} ${size ? `(${size})` : ''}</span>
+                    <div style="margin-inline-start: auto; display: flex; gap: 8px;">
+                      <button class="opens preview-btn" data-path="${escapeHtml(relPath)}" data-name="${escapeHtml(name)}" style="background:none;border:0;cursor:pointer;">View</button>
+                      <a class="opens" href="${href}" download="${escapeHtml(name)}">Download</a>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('');
+
+            liveArtifacts.querySelectorAll('.preview-btn').forEach(btn => {
+              btn.addEventListener('click', () => previewFile(btn.dataset.path, btn.dataset.name));
+            });
+          }
+
+          assistantTurn.removeAttribute('id');
+          scrollToBottom();
+          loadWorkspaceFiles();
+          loadSessions();
+        }
+      }
+    }
   } catch (err) {
-    const currWorking = document.getElementById('workingTurn');
-    if (currWorking) currWorking.remove();
-
-    appendMessageToDom({
-      role: 'assistant',
-      content: `⚠️ **Execution Error**: ${err.message}`,
-      created_at: Date.now() / 1000
-    });
+    if (liveStatus) liveStatus.remove();
+    if (liveProse) {
+      liveProse.innerHTML = `
+        <div class="filecard" style="border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); padding: 14px 16px;">
+          <div style="color: var(--danger); font-weight: 600; margin-block-end: 4px;">⚠️ Request Error</div>
+          <div style="font-size: 13.5px;">${escapeHtml(err.message)}</div>
+        </div>
+      `;
+    }
     scrollToBottom();
   } finally {
     sendBtn.disabled = false;

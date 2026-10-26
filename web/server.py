@@ -150,7 +150,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         body = self._read_json()
 
         if path == "/api/sessions":
-            title = body.get("title", "New Chat")
+            title = body.get("title", "New chat")
             session = create_session(title=title)
             self._json(201, {"session": session})
             return
@@ -162,15 +162,42 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "session_id and text are required"})
                 return
 
-            try:
-                outcome = self.runner.run_turn(session_id, text)
-                self._json(200, outcome)
-            except Exception as e:
-                self._json(500, {"error": f"Agent error: {str(e)}"})
-            return
+            is_stream = body.get("stream", True)
+            if is_stream:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                def sse_callback(event_type: str, data: dict):
+                    msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                    try:
+                        self.wfile.write(msg.encode("utf-8"))
+                        self.wfile.flush()
+                    except Exception:
+                        pass
+
+                try:
+                    self.runner.run_turn(session_id, text, callback=sse_callback)
+                except Exception as exc:
+                    sse_callback("error", {
+                        "title": "Turn Execution Error",
+                        "message": str(exc),
+                        "remedy": "Check the terminal logs on Termux.",
+                        "raw": str(exc),
+                    })
+                return
+            else:
+                try:
+                    outcome = self.runner.run_turn(session_id, text)
+                    self._json(200, outcome)
+                except Exception as e:
+                    self._json(500, {"error": f"Agent error: {str(e)}"})
+                return
 
         elif path.startswith("/api/connectors/") and path.endswith("/toggle"):
-            # /api/connectors/<id>/toggle
             cid = path.split("/")[3]
             enabled = body.get("enabled")
             new_state = toggle_connector(cid, enabled)
@@ -178,7 +205,6 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
             return
 
         elif path.startswith("/api/connectors/") and path.endswith("/config"):
-            # /api/connectors/<id>/config
             cid = path.split("/")[3]
             config = body.get("config", {})
             upsert_connector(
@@ -194,7 +220,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/connectors/custom_mcp":
             name = body.get("name", "Custom MCP")
-            kind = body.get("kind", "mcp_stdio")  # mcp_stdio or mcp_sse
+            kind = body.get("kind", "mcp_stdio")
             description = body.get("description", "Custom MCP Connector")
             config = body.get("config", {})
             cid = f"mcp_{name.lower().replace(' ', '_')}"

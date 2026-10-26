@@ -3,7 +3,8 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Optional
 from db import add_message, get_messages, record_artifact, update_session_title
 from sandbox.runner import SessionSandbox
 from sandbox.tracker import snapshot_workspace, diff_workspace
@@ -48,8 +49,13 @@ class AgentRunner:
         self.connectors = connector_manager
         self.planner = planner or LLMPlanner()
 
-    def run_turn(self, session_id: str, user_text: str) -> dict[str, Any]:
-        """Execute one complete conversational agent turn."""
+    def run_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        callback: Optional[Callable[[str, dict], None]] = None
+    ) -> dict[str, Any]:
+        """Execute one complete conversational agent turn with optional real-time event callbacks."""
         sandbox = SessionSandbox(session_id)
 
         # 1. Snapshot workspace before executing
@@ -68,10 +74,8 @@ class AgentRunner:
             if role == "user":
                 messages.append({"role": "user", "content": content})
             elif role == "assistant":
-                # If files were generated in previous turn, mention them to provide grounding
                 if m.get("files_generated"):
-                    files_note = f"\n(Files available in workspace: {', '.join(m['files_generated'])})"
-                    content = content + files_note
+                    content = content + f"\n(Files available in workspace: {', '.join(m['files_generated'])})"
                 messages.append({"role": "assistant", "content": content})
 
         # Append new user message
@@ -81,15 +85,29 @@ class AgentRunner:
         # Auto-update session title on first turn
         if len(history) == 0:
             clean_title = " ".join(user_text.split()[:5])[:36]
-            update_session_title(session_id, clean_title or "New Chat")
+            update_session_title(session_id, clean_title or "New chat")
 
         # 4. Multi-turn Tool Calling Loop
-        max_turns = 6
+        max_turns = 8
         collected_tool_runs = []
         final_text = ""
+        error_info = None
 
         for turn in range(max_turns):
+            if callback:
+                callback("status", {"message": f"Planning turn {turn + 1}..."})
+
             response = self.planner.complete(messages, tools=all_tools)
+
+            if response.get("error"):
+                error_info = response["error"]
+                if callback:
+                    callback("error", error_info)
+                final_text = f"⚠️ **{error_info['title']}**\n\n{error_info['message']}"
+                if error_info.get("remedy"):
+                    final_text += f"\n\n*Fix:* {error_info['remedy']}"
+                break
+
             content = response.get("content")
             tool_calls = response.get("tool_calls", [])
 
@@ -97,8 +115,10 @@ class AgentRunner:
                 final_text = content or "Task completed."
                 break
 
-            # Process tool calls
-            assistant_msg = {"role": "assistant", "content": content or ""}
+            # Format assistant message with tool calls
+            assistant_msg = {"role": "assistant"}
+            if content:
+                assistant_msg["content"] = content
             formatted_tc = []
             for tc in tool_calls:
                 call_dict = {
@@ -118,9 +138,15 @@ class AgentRunner:
 
                 if t_name == "run_terminal_command":
                     cmd = t_args.get("command", "")
+                    
+                    # Notify UI of EXACT command starting
+                    if callback:
+                        callback("command_start", {"command": cmd, "tool": "terminal"})
+
                     exec_result = sandbox.run_command(cmd)
                     tool_content = f"STDOUT:\n{exec_result['stdout']}\nSTDERR:\n{exec_result['stderr']}\nExit Code: {exec_result['exit_code']}"
-                    collected_tool_runs.append({
+                    
+                    cmd_info = {
                         "tool": "terminal",
                         "command": cmd,
                         "stdout": exec_result["stdout"],
@@ -128,17 +154,30 @@ class AgentRunner:
                         "exit_code": exec_result["exit_code"],
                         "duration_ms": exec_result["duration_ms"],
                         "ok": exec_result["ok"],
-                    })
+                    }
+                    collected_tool_runs.append(cmd_info)
+
+                    # Notify UI of command completion
+                    if callback:
+                        callback("command_done", cmd_info)
                 else:
-                    # Dispatch to Connector or MCP
+                    # Connector or MCP tool
+                    if callback:
+                        callback("connector_start", {"tool": t_name, "arguments": t_args})
+                    
                     res = self.connectors.execute_tool(t_name, t_args, routing)
                     tool_content = json.dumps(res) if isinstance(res, (dict, list)) else str(res)
-                    collected_tool_runs.append({
+                    
+                    conn_info = {
                         "tool": t_name,
                         "arguments": t_args,
                         "result": res,
                         "ok": not ("error" in res if isinstance(res, dict) else False),
-                    })
+                    }
+                    collected_tool_runs.append(conn_info)
+
+                    if callback:
+                        callback("connector_done", conn_info)
 
                 messages.append({
                     "role": "tool",
@@ -169,9 +208,15 @@ class AgentRunner:
             files_generated=changed_files if changed_files else None,
         )
 
-        return {
+        outcome = {
             "message": saved_msg,
             "tool_runs": collected_tool_runs,
             "files_generated": artifacts_meta,
             "workspace": str(sandbox.workspace_dir),
+            "error": error_info,
         }
+
+        if callback:
+            callback("done", outcome)
+
+        return outcome

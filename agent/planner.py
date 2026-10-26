@@ -60,8 +60,11 @@ def adapt_messages_for_gemini(messages: list[dict[str, Any]]) -> list[dict[str, 
                 # Gemini requires omitting content when tool_calls are present
                 entry.pop("content", None)
                 
-                # Check if first call carries thought_signature
                 head = tool_calls[0] if tool_calls else {}
+                msg_extra = entry.get("extra_content")
+                if isinstance(msg_extra, dict) and not head.get("extra_content"):
+                    head["extra_content"] = copy.deepcopy(msg_extra)
+
                 has_sig = bool((head.get("extra_content") or {}).get("google", {}).get("thought_signature"))
                 
                 # If unsigned, add escape hatch placeholder to prevent HTTP 400
@@ -78,6 +81,48 @@ def adapt_messages_for_gemini(messages: list[dict[str, Any]]) -> list[dict[str, 
 
         adapted.append(entry)
     return adapted
+
+def parse_provider_error(status_code: int, raw_body: str) -> dict[str, str]:
+    title = f"Provider Error (HTTP {status_code})"
+    remedy = ""
+    message = raw_body[:500]
+
+    try:
+        data = json.loads(raw_body)
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            data = data[0]
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict):
+                message = err.get("message") or str(err)
+            elif err:
+                message = str(err)
+    except Exception:
+        pass
+
+    if status_code in (401, 403):
+        title = "Authentication Failed"
+        remedy = "Verify LLM_API_KEY in your .env file."
+    elif status_code == 404:
+        title = "Model or Endpoint Not Found"
+        remedy = "Verify LLM_BASE_URL and LLM_MODEL in .env. For Gemini, use: https://generativelanguage.googleapis.com/v1beta/openai"
+    elif status_code == 429:
+        title = "Quota / Rate Limit Exceeded"
+        remedy = "Your API quota is exceeded. Wait a few moments or check your API billing tier."
+    elif status_code == 400:
+        if "thought_signature" in message.lower():
+            title = "Missing Thought Signature"
+            remedy = "Gemini thinking models require thought_signature on tool call replay."
+        else:
+            title = "Invalid Request Schema (HTTP 400)"
+            remedy = "The model rejected the parameter schema or function call format."
+
+    return {
+        "title": title,
+        "message": message,
+        "remedy": remedy,
+        "raw": raw_body[:1000]
+    }
 
 class LLMPlanner:
     def __init__(
@@ -105,11 +150,13 @@ class LLMPlanner:
         """Send chat completion request to the provider."""
         if not self.api_key:
             return {
-                "content": (
-                    "⚠️ **LLM API Key Not Configured**\n\n"
-                    "Please set `LLM_API_KEY` in `.env` or in `config.py`.\n"
-                    "Supported providers: Google Gemini, OpenAI, Groq, Ollama, OpenRouter."
-                ),
+                "content": None,
+                "error": {
+                    "title": "LLM API Key Missing",
+                    "message": "No API key was provided.",
+                    "remedy": "Please set LLM_API_KEY in your .env file or environment.",
+                    "raw": "LLM_API_KEY is empty."
+                },
                 "tool_calls": []
             }
 
@@ -147,15 +194,24 @@ class LLMPlanner:
                 result = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", "replace")
+            err_parsed = parse_provider_error(e.code, err_body)
             logger.error(f"LLM API Error (HTTP {e.code}): {err_body}")
             return {
-                "content": f"⚠️ **LLM Error (HTTP {e.code})**: {err_body}",
+                "content": None,
+                "error": err_parsed,
                 "tool_calls": []
             }
         except Exception as e:
             logger.error(f"LLM Network/Connection Error: {e}")
+            err_parsed = {
+                "title": "Connection Failed",
+                "message": str(e),
+                "remedy": "Check your phone's network connection and the LLM endpoint URL.",
+                "raw": str(e)
+            }
             return {
-                "content": f"⚠️ **Connection Failed**: {str(e)}",
+                "content": None,
+                "error": err_parsed,
                 "tool_calls": []
             }
 
@@ -178,8 +234,8 @@ class LLMPlanner:
             # Preserve extra_content (such as thought_signature from Gemini 3/2.5)
             extra = tc.get("extra_content")
             parsed_tool_calls.append({
-                "id": tc.get("id", "call_default"),
-                "name": fn.get("name"),
+                "id": str(tc.get("id") or "call_default"),
+                "name": str(fn.get("name") or ""),
                 "arguments": args,
                 "extra_content": dict(extra) if isinstance(extra, dict) else {},
             })
