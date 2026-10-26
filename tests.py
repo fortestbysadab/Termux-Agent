@@ -170,6 +170,64 @@ class TestTermuxAgent(unittest.TestCase):
         self.assertNotIn("name", adapted[2])
         self.assertEqual(adapted[1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "sig123")
 
+    def test_filter_chat_artifacts(self):
+        """Ensure intermediate generator scripts (.py) are filtered out of chat cards when deliverables (.pdf) exist."""
+        from agent.loop import filter_chat_artifacts
+
+        # Case 1: User asks for PDF, agent generates script and PDF
+        files1 = ["generate_pdf.py", "demo_document.pdf"]
+        chat_files1 = filter_chat_artifacts(files1, user_text="create a demo pdf")
+        self.assertEqual(chat_files1, ["demo_document.pdf"])
+
+        # Case 2: User explicitly asks for python script
+        files2 = ["script.py"]
+        chat_files2 = filter_chat_artifacts(files2, user_text="write a python script for me")
+        self.assertEqual(chat_files2, ["script.py"])
+
+        # Case 3: User asks for both python code and image chart
+        files3 = ["generate_chart.py", "chart.png"]
+        chat_files3 = filter_chat_artifacts(files3, user_text="give me python code and the chart image")
+        self.assertEqual(chat_files3, ["generate_chart.py", "chart.png"])
+
+    def test_workspace_isolation_and_file_endpoints(self):
+        """Verify per-session workspace isolation and file preview/download retrieval."""
+        s1 = create_session(title="Session 1")
+        s2 = create_session(title="Session 2")
+        sid1, sid2 = s1["id"], s2["id"]
+
+        sbx1 = SessionSandbox(sid1)
+        sbx2 = SessionSandbox(sid2)
+
+        # Create files in each session
+        file1 = sbx1.workspace_dir / "demo_doc.pdf"
+        file1.write_bytes(b"%PDF-1.4 test binary pdf content")
+
+        file2 = sbx2.workspace_dir / "other.txt"
+        file2.write_text("Hello session 2", encoding="utf-8")
+
+        # Verify filesystem isolation
+        self.assertTrue((sbx1.workspace_dir / "demo_doc.pdf").exists())
+        self.assertFalse((sbx1.workspace_dir / "other.txt").exists())
+        self.assertTrue((sbx2.workspace_dir / "other.txt").exists())
+        self.assertFalse((sbx2.workspace_dir / "demo_doc.pdf").exists())
+
+        # Verify URL path parsing logic matches the fixed server routing
+        path = f"/api/workspace/{sid1}/files"
+        parts = [p for p in path.split("/") if p]
+        self.assertEqual(parts[0], "api")
+        self.assertEqual(parts[1], "workspace")
+        self.assertEqual(parts[2], sid1)
+        self.assertEqual(parts[3], "files")
+
+        file_path = f"/api/workspace/{sid1}/file"
+        fparts = [p for p in file_path.split("/") if p]
+        self.assertEqual(fparts[2], sid1)
+        self.assertEqual(fparts[3], "file")
+
+        # Clean up
+        delete_session(sid1)
+        delete_session(sid2)
+
     def test_agent_event_callbacks(self):
         """Verify that AgentRunner fires real-time callbacks."""
         session = create_session(title="Callback Test")

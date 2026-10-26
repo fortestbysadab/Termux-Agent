@@ -100,11 +100,11 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
             self._json(200, {"connectors": summary})
             return
 
-        elif path.startswith("/api/workspace/") and path.endswith("/files"):
-            # e.g. /api/workspace/<session_id>/files
-            parts = path.strip("/").split("/")
-            if len(parts) >= 3:
-                session_id = parts[1]
+        elif path.startswith("/api/workspace/"):
+            parts = [p for p in path.split("/") if p]
+            # Expected format: ['api', 'workspace', '<session_id>', 'files' | 'file']
+            if len(parts) >= 4 and parts[3] == "files":
+                session_id = parts[2]
                 sbx = SessionSandbox(session_id)
                 files = []
                 for rel, meta in snapshot_workspace(sbx.workspace_dir).items():
@@ -117,11 +117,9 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self._json(200, {"files": sorted(files, key=lambda x: x["name"])})
                 return
 
-        elif path.startswith("/api/workspace/") and "/file" in path:
-            # Download or preview workspace file
-            parts = path.strip("/").split("/")
-            if len(parts) >= 3:
-                session_id = parts[1]
+            elif len(parts) >= 4 and parts[3] == "file":
+                # Download or preview workspace file
+                session_id = parts[2]
                 rel_path = query.get("path", [""])[0]
                 if not rel_path or ".." in rel_path:
                     self._json(400, {"error": "Invalid file path"})
@@ -131,13 +129,15 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 if not target.is_file() or not target.is_relative_to(sbx.workspace_dir):
                     self._json(404, {"error": "File not found"})
                     return
-                
+
                 content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
                 data = target.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Content-Disposition", f'inline; filename="{target.name}"')
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
                 self.wfile.write(data)
                 return

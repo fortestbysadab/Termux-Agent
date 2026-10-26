@@ -687,16 +687,52 @@ function renderWorkspaceFilesList() {
 fileFilterInput.addEventListener('input', renderWorkspaceFilesList);
 
 async function previewFile(relPath, filename) {
-  try {
-    const resp = await fetch(`/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}`);
-    const content = await resp.text();
-    previewFileName.textContent = filename;
-    previewFileContent.textContent = content;
-    downloadPreviewBtn.href = `/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}`;
-    downloadPreviewBtn.download = filename;
+  const fileUrl = `/api/workspace/${state.currentSessionId}/file?path=${encodeURIComponent(relPath)}`;
+  previewFileName.textContent = filename;
+  downloadPreviewBtn.href = fileUrl;
+  downloadPreviewBtn.download = filename;
+
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  const preEl = document.getElementById('previewFileContent');
+  const iframeEl = document.getElementById('previewFileIframe');
+  const mediaEl = document.getElementById('previewMediaContainer');
+
+  preEl.style.display = 'none';
+  iframeEl.style.display = 'none';
+  mediaEl.style.display = 'none';
+  mediaEl.innerHTML = '';
+
+  if (ext === 'pdf' || ext === 'html' || ext === 'htm') {
+    iframeEl.src = fileUrl;
+    iframeEl.style.display = 'block';
     filePreviewModal.classList.add('open');
-  } catch (err) {
-    alert('Failed to preview file: ' + err.message);
+  } else if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext)) {
+    mediaEl.innerHTML = `<img src="${fileUrl}" alt="${escapeHtml(filename)}" style="max-width: 100%; max-height: 60vh; object-fit: contain; border-radius: 6px;">`;
+    mediaEl.style.display = 'block';
+    filePreviewModal.classList.add('open');
+  } else if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) {
+    mediaEl.innerHTML = `<audio controls src="${fileUrl}" style="width: 100%; margin-block: 20px;"></audio>`;
+    mediaEl.style.display = 'block';
+    filePreviewModal.classList.add('open');
+  } else if (['mp4', 'webm'].includes(ext)) {
+    mediaEl.innerHTML = `<video controls src="${fileUrl}" style="max-width: 100%; max-height: 60vh; border-radius: 6px;"></video>`;
+    mediaEl.style.display = 'block';
+    filePreviewModal.classList.add('open');
+  } else {
+    try {
+      const resp = await fetch(fileUrl);
+      if (!resp.ok) {
+        throw new Error(`File not found or failed to load (${resp.status})`);
+      }
+      const text = await resp.text();
+      preEl.textContent = text;
+      preEl.style.display = 'block';
+      filePreviewModal.classList.add('open');
+    } catch (err) {
+      preEl.textContent = `Error loading file: ${err.message}`;
+      preEl.style.display = 'block';
+      filePreviewModal.classList.add('open');
+    }
   }
 }
 

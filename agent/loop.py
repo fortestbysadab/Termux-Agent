@@ -21,10 +21,63 @@ CAPABILITIES:
 3. CONNECTORS & MCP: You have access to any external tools from enabled Connectors (GitHub, Notion, Linear, etc.) and Custom MCP servers.
 
 WORKFLOW RULES:
-- If the user asks for a file (document, script, CSV, HTML, analysis, code), ALWAYS write/create the file in the workspace using terminal commands (e.g. `cat << 'EOF' > filename.ext ...` or Python scripts).
+- If the user asks for a file (document, script, CSV, HTML, analysis, code), ALWAYS write/create the file in the workspace using terminal commands.
+- When generating documents, media, or data files (e.g. PDF, Excel, HTML, CSV, PNG) via Python or Bash:
+  Execute your python code directly (e.g. `python3 -c "..."` or run a script) and ensure the target deliverable file (e.g. `demo_document.pdf`) is created in the current directory. Avoid leaving unnecessary scratch generator scripts if possible.
 - If the task is purely conversational or an inquiry without file requests, answer directly in chat.
 - After running terminal commands, explain the results clearly. Be concise, direct, and helpful.
 """
+
+DELIVERABLE_EXTENSIONS = frozenset({
+    ".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+    ".csv", ".tsv", ".html", ".htm",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg",
+    ".mp3", ".wav", ".m4a", ".mp4", ".webm", ".mov",
+    ".zip", ".tar", ".gz", ".7z",
+    ".json", ".xml", ".yaml", ".yml", ".txt", ".md",
+})
+
+SCRIPT_EXTENSIONS = frozenset({
+    ".py", ".sh", ".bash", ".zsh", ".js", ".ts", ".rb", ".php", ".pl",
+})
+
+def filter_chat_artifacts(changed_files: list[str], user_text: str = "") -> list[str]:
+    """Filter intermediate build/generator scripts out of chat deliverable cards when a deliverable exists.
+    All files remain saved and accessible in the Workspace Files view ('all files means all files')."""
+    if not changed_files or len(changed_files) <= 1:
+        return changed_files
+
+    user_lower = (user_text or "").lower()
+    user_wants_script = any(
+        kw in user_lower
+        for kw in ("python", "py file", ".py", "script", "code", "bash", "shell", ".sh", "write a program")
+    )
+
+    deliverables = []
+    scripts = []
+
+    for f in changed_files:
+        p = Path(f)
+        ext = p.suffix.lower()
+        name_lower = p.name.lower()
+        is_scratch_name = any(
+            name_lower.startswith(prefix)
+            for prefix in ("gen_", "generate_", "create_", "make_", "build_", "temp_", "scratch_", "test_")
+        )
+
+        if ext in DELIVERABLE_EXTENSIONS and not is_scratch_name:
+            deliverables.append(f)
+        elif ext in SCRIPT_EXTENSIONS or is_scratch_name:
+            scripts.append(f)
+        else:
+            deliverables.append(f)
+
+    # If there are primary deliverables (e.g. PDF, image, document, dataset) and user didn't ask for a script,
+    # show only the deliverables in the chat card.
+    if deliverables and not user_wants_script:
+        return deliverables
+
+    return changed_files
 
 TERMINAL_TOOL_SCHEMA = {
     "type": "function",
@@ -190,7 +243,7 @@ class AgentRunner:
         changes = diff_workspace(before_snap, after_snap)
         changed_files = changes["all_changed"]
 
-        # Record generated artifacts in database
+        # Record generated artifacts in database (all files tracked for workspace files view)
         artifacts_meta = []
         for rel in changed_files:
             file_path = sandbox.workspace_dir / rel
@@ -199,19 +252,25 @@ class AgentRunner:
                 art = record_artifact(session_id, file_path.name, rel, size)
                 artifacts_meta.append(art)
 
+        # Smart filter for chat message deliverable cards:
+        # Don't show intermediate generator scripts (e.g. generate_pdf.py) when a primary deliverable (.pdf) was produced.
+        chat_deliverables = filter_chat_artifacts(changed_files, user_text=user_text)
+
         # 6. Save assistant message with tool details and files
         saved_msg = add_message(
             session_id=session_id,
             role="assistant",
             content=final_text,
             tool_calls=[{"name": r.get("tool"), "detail": r} for r in collected_tool_runs] if collected_tool_runs else None,
-            files_generated=changed_files if changed_files else None,
+            files_generated=chat_deliverables if chat_deliverables else None,
         )
+
+        chat_artifacts_meta = [a for a in artifacts_meta if a["rel_path"] in chat_deliverables] if chat_deliverables else []
 
         outcome = {
             "message": saved_msg,
             "tool_runs": collected_tool_runs,
-            "files_generated": artifacts_meta,
+            "files_generated": chat_artifacts_meta,
             "workspace": str(sandbox.workspace_dir),
             "error": error_info,
         }
