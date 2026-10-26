@@ -167,7 +167,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
+                self.send_header("Connection", "close")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
 
@@ -188,6 +188,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                         "remedy": "Check the terminal logs on Termux.",
                         "raw": str(exc),
                     })
+                self.close_connection = True
                 return
             else:
                 try:
