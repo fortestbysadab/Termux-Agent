@@ -27,3 +27,7 @@ workspaces/
 # Python app keeps working with zero Node/Python dependencies at runtime)
 frontend/node_modules/
 web/static/*.map
+
+# Never commit credentials
+.git-credentials
+*credentials*
