@@ -17,6 +17,9 @@ from sandbox.runner import SessionSandbox
 from sandbox.tracker import snapshot_workspace, diff_workspace
 from connectors.manager import ConnectorManager
 from agent.planner import LLMPlanner
+from config import SKILL_ROUTER, LLM_MODEL
+from skills import SkillRouter
+import vision
 from skills import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -48,7 +51,9 @@ WORKFLOW RULES:
   2. Calling a skill loads its full instructions into the conversation. A skill may in turn load further skills (composition) — follow all of them.
   3. Do not invent a procedure when a skill covers it, and do not call `use_skill` for chit-chat.
   4. `list_skills` shows everything available, including skills missing from this catalogue.
-- UPLOADED FILES: files the user attached live in the `uploads/` directory of the workspace. Read them with shell commands; never modify or delete anything in `uploads/`.
+- UPLOADED FILES: files the user attached live in the `uploads/` directory of the workspace. Never modify or delete anything in `uploads/`.
+- {vision}
+- SKILL ROUTER: a router matches the request (and any attached file types) to installed skills and loads them for you; skills listed under AUTO-LOADED SKILLS are already in context. Use `use_skill` for anything the router did not catch, `list_skills` to browse, and `create_skill` when the user wants their own repeatable procedure saved.
 - If the task is purely conversational or an inquiry without file requests, answer directly in chat.
 - After running terminal commands, explain the results clearly. Be concise, direct, and helpful.
 
@@ -190,6 +195,48 @@ def _attachment_note(attachments: Optional[list[dict[str, Any]]]) -> str:
     )
 
 
+CREATE_SKILL_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "create_skill",
+        "description": (
+            "Save a reusable procedure as a new skill (skills/<name>/SKILL.md). Use this when the "
+            "user says 'always do it this way', 'make that a skill', or describes a workflow worth "
+            "repeating. The skill becomes available immediately, to the router and to use_skill."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "kebab-case slug, e.g. 'weekly-status-report'"},
+                "title": {"type": "string", "description": "Human title, e.g. 'Weekly status report'"},
+                "description": {"type": "string", "description": "One line: what the skill produces"},
+                "when_to_use": {"type": "string", "description": "One line: when the agent should reach for it"},
+                "triggers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Words or short phrases in a user request that should auto-load this skill",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File extensions that should auto-load this skill, e.g. ['pdf']",
+                },
+                "uses": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Existing skills this one depends on (they load with it)",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Markdown instructions: the numbered steps, exact commands, output filenames",
+                },
+            },
+            "required": ["name", "description", "body"],
+        },
+    },
+}
+
+
 class AgentRunner:
     def __init__(self, connector_manager: ConnectorManager, planner: LLMPlanner = None):
         self.connectors = connector_manager
@@ -197,12 +244,83 @@ class AgentRunner:
         self.skills = SkillRegistry()
 
     # -------------------------------------------------------------- skills
+    def _router(self) -> SkillRouter:
+        return SkillRouter(self.skills)
+
+    def _auto_route(self, user_text: str, attachments: Optional[list[dict[str, Any]]]):
+        """Pick the skills this request needs, with their dependencies.
+
+        Returns (prompt_block, events, tool_runs) — all empty when nothing
+        matched, so chit-chat stays untouched.
+        """
+        if not SKILL_ROUTER:
+            return "", [], []
+        states = self._skill_states()
+        names = [a.get("filename") for a in (attachments or []) if a.get("filename")]
+        matches = self._router().route(user_text, names, states)
+        if not matches:
+            return "", [], []
+
+        blocks: list[str] = []
+        events: list[tuple[str, dict[str, Any]]] = []
+        runs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        for match in matches:
+            text, loaded, missing = self.skills.load_with_dependencies(match["name"])
+            if not loaded:
+                continue
+            fresh = [n for n in loaded if n not in seen]
+            seen.update(loaded)
+            if not fresh:
+                continue
+            try:
+                record_skill_run(match["name"])
+            except Exception:
+                pass
+
+            why = ", ".join(match["reasons"]) or "matched the request"
+            blocks.append(
+                f"### {match['name']} (auto-loaded — {why})\n"
+                f"Skills loaded: {', '.join(loaded)}. Follow these steps; no need to call use_skill.\n\n{text}"
+            )
+            info = {
+                "tool": f"use_skill:{match['name']}",
+                "name": match["name"],
+                "loaded": loaded,
+                "missing": missing,
+                "command": match["name"],
+                "stdout": f"Router matched {match['name']} ({why}). Loaded: {', '.join(loaded)}",
+                "stderr": "",
+                "exit_code": 0,
+                "duration_ms": 0,
+                "ok": True,
+                "kind": "skill",
+                "auto": True,
+                "reasons": match["reasons"],
+            }
+            events.append(("skill_done", info))
+            runs.append(info)
+
+        if not blocks:
+            return "", [], []
+
+        prompt = (
+            "\n\n## AUTO-LOADED SKILLS (loaded by the router for this turn)\n"
+            "The router already matched these to the user's request and loaded them, together "
+            "with any skills they use. Do not call `use_skill` for them again — just follow the "
+            "steps.\n\n" + "\n\n---\n\n".join(blocks)
+        )
+        return prompt, events, runs
+
     def _skill_states(self) -> dict[str, bool]:
         return {name: state["enabled"] for name, state in get_skill_states().items()}
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, extra: str = "") -> str:
         catalogue = self.skills.catalog(self._skill_states()) or "- (no skills installed)"
-        return SYSTEM_PROMPT.replace("{catalogue}", catalogue)
+        prompt = SYSTEM_PROMPT.replace("{catalogue}", catalogue)
+        prompt = prompt.replace("{vision}", vision.capability_note(LLM_MODEL))
+        return prompt + extra
 
     def run_turn(
         self,
@@ -222,10 +340,20 @@ class AgentRunner:
         active_tools, routing = self.connectors.get_active_tools()
         all_tools = [TERMINAL_TOOL_SCHEMA] + active_tools
         if self.skills.enabled(self._skill_states()):
-            all_tools = all_tools + [LIST_SKILLS_TOOL_SCHEMA, USE_SKILL_TOOL_SCHEMA]
+            all_tools = all_tools + [
+                LIST_SKILLS_TOOL_SCHEMA,
+                USE_SKILL_TOOL_SCHEMA,
+                CREATE_SKILL_TOOL_SCHEMA,
+            ]
 
-        # 3. Assemble messages for LLM
-        messages = [{"role": "system", "content": self._system_prompt()}]
+        # 3. Route first: which skills does this request obviously need?
+        route_prompt, route_events, route_runs = self._auto_route(user_text, attachments)
+        for event, payload in route_events:
+            if callback:
+                callback(event, payload)
+
+        # 4. Assemble messages for LLM
+        messages = [{"role": "system", "content": self._system_prompt(route_prompt)}]
         for m in history[-14:]:  # Keep recent context
             role = m["role"]
             content = m["content"] or ""
@@ -236,9 +364,23 @@ class AgentRunner:
                     content = content + f"\n(Files available in workspace: {', '.join(m['files_generated'])})"
                 messages.append({"role": "assistant", "content": content})
 
-        # Append new user message (with any uploaded files called out)
+        # Append new user message (with any uploaded files called out).
+        # If the model can see, images ride along as content parts — no Python needed.
         prompt_text = user_text + _attachment_note(attachments)
-        messages.append({"role": "user", "content": prompt_text})
+        content, seen_images = vision.build_content(
+            prompt_text, attachments, sandbox.workspace_dir, LLM_MODEL
+        )
+        if seen_images:
+            prompt_text_notes = (
+                f"\n\n[Viewing directly: {', '.join(seen_images)} — the image is attached to this "
+                "message. Describe or read it yourself; only use Python if you need measurements.]"
+            )
+            if isinstance(content, list):
+                content[0]["text"] = content[0]["text"] + prompt_text_notes
+                prompt_text = content[0]["text"]
+            else:
+                content = content + prompt_text_notes
+        messages.append({"role": "user", "content": content})
         add_message(session_id, "user", user_text)
 
         # Auto-update session title on first turn
@@ -248,7 +390,7 @@ class AgentRunner:
 
         # 4. Multi-turn Tool Calling Loop
         max_turns = 8
-        collected_tool_runs = []
+        collected_tool_runs = list(route_runs)
         final_text = ""
         error_info = None
 
@@ -319,6 +461,55 @@ class AgentRunner:
                     # Notify UI of command completion
                     if callback:
                         callback("command_done", cmd_info)
+                elif t_name == "create_skill":
+                    from skills import SkillError, create_skill
+
+                    try:
+                        created = create_skill(
+                            name=str(t_args.get("name", "")),
+                            title=str(t_args.get("title", "") or ""),
+                            description=str(t_args.get("description", "")),
+                            when_to_use=str(t_args.get("when_to_use", "") or ""),
+                            triggers=t_args.get("triggers") or [],
+                            files=t_args.get("files") or [],
+                            uses=t_args.get("uses") or [],
+                            body=str(t_args.get("body", "")),
+                            author="agent",
+                        )
+                        tool_content = (
+                            f"Created skill '{created.name}' at {created.path}. It is live now: "
+                            "the router and use_skill will both find it."
+                        )
+                        ok = True
+                        skill_info = {
+                            "tool": "create_skill",
+                            "name": created.name,
+                            "command": f"create_skill {created.name}",
+                            "stdout": tool_content,
+                            "stderr": "",
+                            "exit_code": 0,
+                            "duration_ms": 0,
+                            "ok": True,
+                            "kind": "skill",
+                        }
+                    except SkillError as exc:
+                        tool_content = f"Could not create the skill: {exc}"
+                        ok = False
+                        skill_info = {
+                            "tool": "create_skill",
+                            "name": str(t_args.get("name", "")),
+                            "command": "create_skill",
+                            "stdout": "",
+                            "stderr": str(exc),
+                            "exit_code": 1,
+                            "duration_ms": 0,
+                            "ok": False,
+                            "kind": "skill",
+                        }
+                    collected_tool_runs.append(skill_info)
+                    if callback:
+                        callback("skill_done", skill_info)
+
                 elif t_name in ("use_skill", "list_skills"):
                     # Skills: load instructions (and the skills they compose) into context
                     if t_name == "list_skills":

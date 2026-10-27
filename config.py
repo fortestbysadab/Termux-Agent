@@ -41,6 +41,18 @@ MAX_UPLOAD_BYTES = int(os.environ.get("AGENT_MAX_UPLOAD_MB", "25")) * 1024 * 102
 # Skills: markdown procedures shipped with the repo (read-only at runtime).
 SKILLS_DIR = Path(os.environ.get("AGENT_SKILLS_DIR", Path(__file__).resolve().parent / "skills"))
 SKILLS_ENABLED_BY_DEFAULT = os.environ.get("AGENT_SKILLS_DEFAULT", "1") not in ("0", "false", "no")
+# Skill router: auto-load matching skills (and their dependencies) before the model speaks.
+SKILL_ROUTER = os.environ.get("AGENT_SKILL_ROUTER", "1") not in ("0", "false", "no")
+
+# Vision: if the model can see, attached images go straight into the turn
+# instead of being described by a Python script. auto|on|off
+VISION_MODE = os.environ.get("AGENT_VISION", "auto").lower()
+INLINE_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+INLINE_IMAGE_MAX_BYTES = int(os.environ.get("AGENT_VISION_MAX_MB", "6")) * 1024 * 1024
+VISION_MODEL_HINTS = (
+    "gemini", "gpt-4o", "gpt-4.1", "gpt-5", "o3", "o4", "claude", "grok",
+    "pixtral", "llava", "qwen-vl", "qwen2-vl", "internvl", "minicpm",
+)
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

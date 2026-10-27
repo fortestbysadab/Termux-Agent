@@ -12,7 +12,9 @@ import { OrbSwap } from './AgentAvatar.jsx';
 export function ToolRunCard({ run, theme, reduced, index = 0 }) {
   // History rows arrive as {name, detail:{...}}; live rows are already flat.
   const r = run.detail ? { ...run.detail } : run;
-  const isSkill = r.kind === 'skill' || String(r.tool || '').startsWith('use_skill');
+  const isSkill =
+    r.kind === 'skill' || String(r.tool || '').startsWith('use_skill') || r.tool === 'create_skill';
+  const isRouter = isSkill && r.auto === true;
   const isTerminal = r.tool === 'terminal' && !isSkill;
   const ok = r.ok !== false;
   const running = r.state === 'running';
@@ -46,6 +48,13 @@ export function ToolRunCard({ run, theme, reduced, index = 0 }) {
           )}
           {isSkill ? 'skill' : isTerminal ? 'bash' : 'mcp'}
         </span>
+
+        {isRouter && (
+          <span className="tool-router" title="The router matched this skill to your request and loaded it automatically">
+            <Icon.Route size={12} />
+            auto
+          </span>
+        )}
 
         {running ? (
           <span className="tool-running">

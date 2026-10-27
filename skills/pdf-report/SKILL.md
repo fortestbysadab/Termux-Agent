@@ -6,6 +6,8 @@ when_to_use: The user wants a report, document, invoice or printable page as PDF
 uses: []
 tools: [run_terminal_command]
 icon: doc
+triggers: [pdf, invoice, letter, certificate, printable, document]
+files: [pdf, md, txt]
 ---
 
 # PDF document

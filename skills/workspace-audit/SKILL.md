@@ -6,6 +6,8 @@ when_to_use: The user asks what is in the workspace, whether a file is valid, or
 uses: []
 tools: [run_terminal_command]
 icon: search
+triggers: [audit, inventory, tidy, cleanup, clean up, validate, check the files, what is in the workspace]
+files: []
 ---
 
 # Workspace audit

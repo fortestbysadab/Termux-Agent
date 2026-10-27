@@ -59,7 +59,9 @@ export function useUploader({ sessionId, onUploaded, onError }) {
   return { queue, run, inputRef, dismiss: (id) => setQueue((q) => q.filter((i) => i.id !== id)) };
 }
 
-export function UploadChips({ queue, onDismiss }) {
+const IMAGE_RE = /\.(png|jpe?g|webp|gif)$/i;
+
+export function UploadChips({ queue, onDismiss, vision = false }) {
   if (!queue.length) return null;
   return (
     <ul className="upload-chips" aria-live="polite">
@@ -76,7 +78,9 @@ export function UploadChips({ queue, onDismiss }) {
               {item.status === 'error'
                 ? item.error
                 : item.status === 'done'
-                  ? `${formatBytes(item.size)} · saved to uploads/`
+                  ? `${formatBytes(item.size)} · saved to uploads/${
+                      vision && IMAGE_RE.test(item.name) ? ' · the model reads it directly' : ''
+                    }`
                   : `${formatBytes(item.size)} · ${Math.round(item.progress * 100)}%`}
             </span>
             {item.status === 'uploading' && (

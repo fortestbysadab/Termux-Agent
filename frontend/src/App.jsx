@@ -43,6 +43,7 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [connectors, setConnectors] = useState([]);
   const [skills, setSkills] = useState([]);
+  const [caps, setCaps] = useState({ vision: false, model: '', skill_router: true });
 
   /* ------------------------------------------------------------- ui state */
   const [input, setInput] = useState('');
@@ -79,6 +80,7 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
+        client.getConfig().then((c) => !cancelled && setCaps(c)).catch(() => {});
         const [list, conns, skillList] = await Promise.all([
           client.getSessions(),
           client.getConnectors(),
@@ -195,6 +197,41 @@ export default function App() {
     } catch (err) {
       window.alert(`Could not change the skill: ${err.message}`);
     }
+  }
+
+  async function createSkillDraft(payload) {
+    try {
+      await client.createSkill(payload);
+      await reloadSkills();
+    } catch (err) {
+      window.alert(`Could not create the skill: ${err.message}`);
+      throw err;
+    }
+  }
+
+  async function updateSkillDraft(name, payload) {
+    try {
+      await client.updateSkill(name, payload);
+      await reloadSkills();
+    } catch (err) {
+      window.alert(`Could not save the skill: ${err.message}`);
+      throw err;
+    }
+  }
+
+  async function deleteSkillDraft(skill) {
+    if (!window.confirm(`Delete the "${skill.title}" skill? The file leaves skills/ permanently.`)) return;
+    try {
+      await client.deleteSkill(skill.name);
+      await reloadSkills();
+    } catch (err) {
+      window.alert(`Could not delete the skill: ${err.message}`);
+    }
+  }
+
+  async function routeSkills(query) {
+    const names = pendingFiles.map((f) => f.filename);
+    return client.routeSkills(query, names);
   }
 
   function trySkill(skill) {
@@ -358,20 +395,27 @@ export default function App() {
       return;
     }
     if (type === 'skill_done') {
-      updateLive((l) =>
-        l
-          ? {
-              ...l,
-              phase: PHASES.solving,
-              detail: null,
-              runs: l.runs.map((r) =>
-                r.state === 'running' && String(r.tool).startsWith('use_skill')
-                  ? { ...data, state: 'done' }
-                  : r,
-              ),
-            }
-          : l,
-      );
+      updateLive((l) => {
+        if (!l) return l;
+        const already = l.runs.some((r) => r.tool === data.tool);
+        return {
+          ...l,
+          phase: PHASES.solving,
+          detail: null,
+          runs: already
+            ? l.runs.map((r) =>
+                String(r.tool) === String(data.tool) ? { ...r, ...data, state: 'done' } : r,
+              )
+            : [
+                ...l.runs.map((r) =>
+                  r.state === 'running' && String(r.tool).startsWith('use_skill')
+                    ? { ...r, state: 'done' }
+                    : r,
+                ),
+                { ...data, state: 'done' },
+              ],
+        };
+      });
       // a skill run changes its counters on the Skills screen
       client.getSkills().then(setSkills).catch(() => {});
       return;
@@ -546,7 +590,7 @@ export default function App() {
     if (screen === 'skills') return `${skills.filter((s) => s.enabled).length} enabled`;
     if (screen === 'files') return `${files.length} file${files.length === 1 ? '' : 's'} in this session`;
     return currentSessionId ? `sandbox · ${currentSessionId.slice(0, 8)}` : undefined;
-  }, [screen, connectorCount, files.length, currentSessionId]);
+  }, [screen, connectorCount, files.length, currentSessionId, skills]);
 
   const openPreview = (relPath, filename) => setPreview({ relPath, filename });
   const showSidebar = isCompact ? sidebarOpen : true;
@@ -660,7 +704,11 @@ export default function App() {
 
               </DropZone>
 
-              <UploadChips queue={uploader.queue} onDismiss={uploader.dismiss} />
+              <UploadChips
+                queue={uploader.queue}
+                onDismiss={uploader.dismiss}
+                vision={caps.vision}
+              />
 
               <Composer
                 value={input}
@@ -699,6 +747,10 @@ export default function App() {
               onToggle={toggleSkill}
               onTry={trySkill}
               onRefresh={reloadSkills}
+              onCreate={createSkillDraft}
+              onUpdate={updateSkillDraft}
+              onDelete={deleteSkillDraft}
+              onRoute={routeSkills}
             />
           )}
 

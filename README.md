@@ -46,13 +46,20 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - Everything is written to `uploads/` **inside that session's workspace**, size-checked (`AGENT_MAX_UPLOAD_MB`, 25 MB default), name-sanitised and de-duplicated (`report (2).pdf`), with an extension allowlist.
    - The agent is told exactly which files arrived, so "clean this CSV" or "turn this into a deck" works on the first try. Uploaded files are listed separately from agent output in the Workspace panel and are never modified by the agent.
 
-9. **Skills — reusable procedures that compose**:
+9. **Vision-first files — no needless Python**:
+   - When the planner model can see (Gemini 2.5, GPT-4o/4.1/5, Claude, Grok, Qwen-VL…), attached images are sent **into the turn as image content**, base64 and all — the model looks at the screenshot itself instead of running a script to describe it. `vision.build_content()` keeps PDFs, spreadsheets, archives and media on the tool path, where they belong.
+   - Capability is detected from the model name (`AGENT_VISION=on|off|auto`), so a text-only model transparently falls back to shell inspection and is told to say so.
+   - The system prompt states which mode is active, and only then does the "reach for Python" instinct kick in — for pixels that need measuring, OCR at scale, or formats no model reads natively.
+
+10. **Skills — reusable procedures that compose, route and self-author**:
    - A skill is a directory of markdown: `skills/<name>/SKILL.md` with `name`, `title`, `description`, `when_to_use`, `uses[]`, `tools[]`, `icon` frontmatter. No code, no install step.
    - **Progressive disclosure**: only `name: description — when_to_use` goes into the system prompt; the full procedure is loaded by the `use_skill` tool when the model actually needs it.
    - **Skills calling skills**: a skill declares `uses: [a, b, c]` and `use_skill` loads it *plus* its dependencies in one call, each body headed with why it was pulled in. `report-bundle` composes `data-wrangler` + `svg-chart` + `xlsx-report` + `pdf-report` and emits a PDF, an XLSX, an SVG and a cleaned CSV, zipped.
+   - **Router — skills load without being asked.** `SkillRouter` scores enabled skills against the request *and* the attached file types using each skill's `triggers` and `files` frontmatter. Say "read this PDF", attach a `.csv`, or ask to "chart the scores" and the matching skill (plus its dependencies) is already in the prompt before the model answers — no tool call, no wasted turn. Any prompt that matches nothing is untouched, so chit-chat costs nothing. The Skills screen has a live router tester (`GET /api/skills/router`) so the rules are inspectable instead of magic.
+   - **Anyone can write a skill**: the *New skill* button (triggers, file types, dependencies, instructions), a `SKILL.md` dropped into `skills/`, or plain English in chat — ask for "save that as a skill" and the agent writes it with the `create_skill` tool. User and agent skills are badged *yours* / *by the agent* and can be edited or deleted from the UI; the six bundled skills can only be disabled.
    - Six skills ship in the box: `data-wrangler`, `svg-chart`, `xlsx-report`, `pdf-report`, `workspace-audit`, `report-bundle`. Enable/disable any of them from the Skills screen — the catalogue and the tool list update on the next turn, and run counters are kept in SQLite.
 
-10. **Console built on [Libraries.dev](https://libraries.dev)**:
+11. **Console built on [Libraries.dev](https://libraries.dev)**:
    - **Border Beam** (`border-beam`) — a single, subtle animated glow wrapped around **the chat composer only**, calm at rest, brighter and faster while the agent works.
    - **Thinking Orbs** (`thinking-orbs`) — every spinner replaced by an orb whose state is driven by the real SSE activity: `searching` (reasoning), `working` (running a command), `connecting` (calling a tool), `solving` (reading results), with crossfades between phases.
    - **Bot Avatars** (`bot-avatars`) — the planner, the shell and the MCP bridge each get their own animated identity (plush / plastic bodies, distinct colours) that switches as control passes between them. Connectors are shown as their own real brand logos, not as bots.
@@ -88,8 +95,9 @@ termux-agent/
 ├── main.py                  # Entry point
 ├── config.py                # Environment & paths (uploads dir, skill dir, limits)
 ├── db.py                    # SQLite database (sessions, history, connectors, artifacts, skill state)
-├── skills.py                # SKILL.md discovery, dependency loading, prompt catalogue
+├── skills.py                # SKILL.md discovery, dependency loading, router, authoring
 ├── uploads.py               # Multipart parsing, filename sanitising, uploads/ storage
+├── vision.py                # model-capability detection + inline image content parts
 ├── skills/
 │   ├── data-wrangler/SKILL.md
 │   ├── svg-chart/SKILL.md

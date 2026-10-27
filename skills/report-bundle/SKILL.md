@@ -6,6 +6,8 @@ when_to_use: The user wants a full report, "everything in one file", or a set of
 uses: [data-wrangler, svg-chart, xlsx-report, pdf-report]
 tools: [run_terminal_command]
 icon: bundle
+triggers: [bundle, everything, full report, all the files, zip, package, deliverables]
+files: []
 ---
 
 # Report bundle (a skill that calls other skills)

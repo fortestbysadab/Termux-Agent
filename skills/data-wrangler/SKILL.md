@@ -6,6 +6,8 @@ when_to_use: The user uploads a file or asks to clean, filter, join, summarise o
 uses: []
 tools: [run_terminal_command]
 icon: layers
+triggers: [clean, filter, sort, dedupe, deduplicate, join, merge, convert, summarise, summarize, csv, json, dataset, data, spreadsheet, rows, columns]
+files: [csv, tsv, json, txt, log]
 ---
 
 # Data wrangler

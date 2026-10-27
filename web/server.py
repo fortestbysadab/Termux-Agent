@@ -26,7 +26,16 @@ from db import (
     delete_connector,
 )
 from connectors.manager import ConnectorManager
-from skills import SkillRegistry
+import vision as vision_mod
+from config import LLM_MODEL, MAX_UPLOAD_BYTES, SKILL_ROUTER
+from skills import (
+    SkillError,
+    SkillRegistry,
+    SkillRouter,
+    create_skill,
+    delete_skill,
+    update_skill,
+)
 from uploads import UploadError, parse_multipart, store_uploads
 from agent.loop import AgentRunner
 from sandbox.runner import SessionSandbox
@@ -116,7 +125,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(body)
@@ -141,7 +150,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -187,6 +196,26 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 for name, skill in sorted(self.skill_registry.all().items())
             ]
             self._json(200, {"skills": skills})
+            return
+
+        elif path == "/api/config":
+            # What the console needs to know about the agent's capabilities.
+            self._json(200, {
+                "model": LLM_MODEL,
+                "vision": vision_mod.model_has_vision(LLM_MODEL),
+                "skill_router": SKILL_ROUTER,
+                "max_upload_mb": max(1, MAX_UPLOAD_BYTES // (1024 * 1024)),
+            })
+            return
+
+        elif path == "/api/skills/router":
+            # Preview what the router would load for a message — used by the UI
+            # so the routing rules are inspectable instead of magic.
+            query = urllib.parse.parse_qs(parsed.query).get("q", [""])[0]
+            files = urllib.parse.parse_qs(parsed.query).get("file", [])
+            states = {n: st["enabled"] for n, st in get_skill_states().items()}
+            matches = SkillRouter(self.skill_registry).route(query, files, states)
+            self._json(200, {"query": query, "files": files, "matches": matches})
             return
 
         elif path.startswith("/api/workspace/"):
@@ -396,6 +425,27 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
             self._json(201, {"files": stored})
             return
 
+        elif path == "/api/skills":
+            try:
+                skill = create_skill(
+                    name=str(body.get("name", "")),
+                    title=str(body.get("title", "") or ""),
+                    description=str(body.get("description", "")),
+                    when_to_use=str(body.get("when_to_use", "") or ""),
+                    triggers=body.get("triggers") or [],
+                    files=body.get("files") or [],
+                    uses=body.get("uses") or [],
+                    body=str(body.get("body", "")),
+                    icon=str(body.get("icon", "spark") or "spark"),
+                    author="user",
+                    overwrite=bool(body.get("overwrite")),
+                )
+            except SkillError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(201, {"skill": skill.to_dict()})
+            return
+
         elif path.startswith("/api/skills/") and path.endswith("/toggle"):
             name = path.split("/")[3]
             enabled = body.get("enabled")
@@ -446,6 +496,27 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
 
         self._json(404, {"error": "Endpoint not found"})
 
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        raw_body = self._read_body()
+
+        if path.startswith("/api/skills/"):
+            name = path.removeprefix("/api/skills/")
+            body = self._read_json(raw_body or b"{}")
+            try:
+                skill = update_skill(name, **{k: v for k, v in body.items() if k in {
+                    "title", "description", "when_to_use", "uses", "triggers",
+                    "files", "body", "icon",
+                }})
+            except SkillError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"skill": skill.to_dict()})
+            return
+
+        self._json(404, {"error": "Endpoint not found"})
+
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -462,6 +533,16 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self._json(200, {"success": True, "id": session_id})
             else:
                 self._json(404, {"error": "Session not found"})
+            return
+
+        elif path.startswith("/api/skills/"):
+            name = path.removeprefix("/api/skills/")
+            try:
+                delete_skill(name)
+            except SkillError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"success": True, "id": name})
             return
 
         elif path.startswith("/api/connectors/"):

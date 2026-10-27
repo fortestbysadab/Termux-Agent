@@ -68,42 +68,45 @@ export default function WorkspacePanel({ open, onClose, files, sessionId, onPrev
           </p>
         ) : (
           <ul className="ws-tree">
-            {files.map((f, i) => {
-              const href = `/api/workspace/${sessionId}/file?path=${encodeURIComponent(f.rel_path)}`;
-              const isUpload = f.rel_path.startsWith('uploads/');
-              const prev = files[i - 1];
-              const groupStart = i === 0 || (prev && prev.rel_path.startsWith('uploads/') !== isUpload);
-              return (
-                <Fragment key={f.rel_path}>
-                {groupStart && (
+            {[
+              { label: 'Uploads', items: files.filter((f) => f.rel_path.startsWith('uploads/')) },
+              { label: 'Agent output', items: files.filter((f) => !f.rel_path.startsWith('uploads/')) },
+            ]
+              .filter((group) => group.items.length > 0)
+              .map((group) => (
+                <Fragment key={group.label}>
                   <li className="ws-group-label" aria-hidden="true">
-                    {isUpload ? 'Uploads' : 'Agent output'}
+                    {group.label}
                   </li>
-                )}
-                <li key={f.rel_path} className={`ws-file ${isUpload ? 'is-upload' : ''}`}>
-                  <span className="ws-ext">{fileExt(f.name)}</span>
-                  <span className="ws-file-info">
-                    <span className="ws-file-name" title={f.name}>
-                      {f.name}
-                    </span>
-                    <span className="ws-file-size">{formatBytes(f.size)}</span>
-                  </span>
-                  <span className="ws-file-actions">
-                    <button
-                      type="button"
-                      className="mini-btn"
-                      onClick={() => onPreview(f.rel_path, f.name)}
-                    >
-                      <Icon.Eye size={14} />
-                    </button>
-                    <a className="mini-btn" href={href} download={f.name} title={`Download ${f.name}`}>
-                      <Icon.Download size={14} />
-                    </a>
-                  </span>
-                </li>
+                  {group.items.map((f) => {
+                    const href = `/api/workspace/${sessionId}/file?path=${encodeURIComponent(f.rel_path)}`;
+                    const isUpload = group.label === 'Uploads';
+                    return (
+                      <li key={f.rel_path} className={`ws-file ${isUpload ? 'is-upload' : ''}`}>
+                        <span className="ws-ext">{fileExt(f.name)}</span>
+                        <span className="ws-file-info">
+                          <span className="ws-file-name" title={f.name}>
+                            {f.name}
+                          </span>
+                          <span className="ws-file-size">{formatBytes(f.size)}</span>
+                        </span>
+                        <span className="ws-file-actions">
+                          <button
+                            type="button"
+                            className="mini-btn"
+                            onClick={() => onPreview(f.rel_path, f.name)}
+                          >
+                            <Icon.Eye size={14} />
+                          </button>
+                          <a className="mini-btn" href={href} download={f.name} title={`Download ${f.name}`}>
+                            <Icon.Download size={14} />
+                          </a>
+                        </span>
+                      </li>
+                    );
+                  })}
                 </Fragment>
-              );
-            })}
+              ))}
           </ul>
         )}
       </div>

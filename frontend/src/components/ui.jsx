@@ -47,6 +47,19 @@ export const Icon = {
       <path d="M6 6l12 12M18 6 6 18" />
     </Svg>
   ),
+  Pencil: (p) => (
+    <Svg {...p}>
+      <path d="M4 20h4l10-10a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5 4 20Z" />
+    </Svg>
+  ),
+  Route: (p) => (
+    <Svg {...p}>
+      <path d="M4 6h6a4 4 0 0 1 4 4v8" />
+      <path d="M4 18h4" />
+      <path d="M14 14l-3 4 3 4" />
+      <circle cx="4" cy="6" r="1.6" />
+    </Svg>
+  ),
   Menu: (p) => (
     <Svg {...p}>
       <path d="M4 7h16M4 12h16M4 17h11" />

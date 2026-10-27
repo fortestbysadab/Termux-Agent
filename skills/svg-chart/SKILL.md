@@ -6,6 +6,8 @@ when_to_use: The user asks for a chart, graph, plot, dashboard or any visual of 
 uses: []
 tools: [run_terminal_command]
 icon: chart
+triggers: [chart, graph, plot, dashboard, visualise, visualize, svg, bars, pie]
+files: [svg]
 ---
 
 # SVG chart

@@ -6,6 +6,8 @@ when_to_use: The user wants a spreadsheet, tracker, plan, budget or schedule as 
 uses: []
 tools: [run_terminal_command]
 icon: table
+triggers: [xlsx, excel, spreadsheet, workbook, tracker, budget, schedule, timetable, plan]
+files: [xlsx, xls]
 ---
 
 # Excel workbook

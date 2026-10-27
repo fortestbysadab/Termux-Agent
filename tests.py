@@ -447,5 +447,144 @@ class TestTermuxAgent(unittest.TestCase):
         self.assertIn("M12 .297c-6.63", bundle)
 
 
+    # ------------------------------------------------------------------ router
+    def test_router_matches_words_and_files(self):
+        """A mention of PDF, or a .csv attachment, selects the right skill."""
+        from skills import SkillRouter
+
+        router = SkillRouter()
+        pdf = router.route("please read this PDF invoice and summarise it", [])
+        self.assertEqual([m["name"] for m in pdf], ["pdf-report"])
+        csv = router.route("clean up the rows in this file", ["scores.csv"])
+        self.assertEqual([m["name"] for m in csv], ["data-wrangler"])
+        chart = router.route("chart the scores for me", [])
+        self.assertEqual([m["name"] for m in chart], ["svg-chart"])
+        self.assertEqual(router.route("hey, how are you?", []), [])
+
+    def test_router_loads_dependencies_of_matched_skill(self):
+        from skills import SkillRouter
+
+        matches = SkillRouter().route("build the full report bundle", [])
+        self.assertEqual(matches[0]["name"], "report-bundle")
+
+    def test_agent_auto_loads_matched_skill(self):
+        """The loop pulls the skill into the prompt itself — no tool call needed."""
+        from connectors.manager import ConnectorManager
+        from agent.loop import AgentRunner
+
+        runner = AgentRunner(ConnectorManager())
+        prompt, events, runs = runner._auto_route("read this pdf for me", [{"filename": "x.pdf"}])
+        self.assertIn("AUTO-LOADED SKILLS", prompt)
+        self.assertIn("pdf-report", [r["name"] for r in runs])
+        self.assertTrue(all(r.get("auto") for r in runs))
+        self.assertEqual(events[0][0], "skill_done")
+        system_prompt = runner._system_prompt(prompt)
+        self.assertIn("pdf-report", system_prompt)
+        self.assertNotIn("{catalogue}", system_prompt)
+        self.assertNotIn("{vision}", system_prompt)
+
+    def test_router_ignores_chit_chat(self):
+        from connectors.manager import ConnectorManager
+        from agent.loop import AgentRunner
+
+        prompt, events, runs = AgentRunner(ConnectorManager())._auto_route("thanks, that works", [])
+        self.assertEqual((prompt, events, runs), ("", [], []))
+
+    def test_user_can_create_and_delete_a_skill(self):
+        """A skill written at runtime routes immediately, then disappears."""
+        from skills import SkillRouter, create_skill, delete_skill, SkillError
+
+        created = create_skill(
+            name="reading list digest",
+            description="Collect links into one markdown digest.",
+            when_to_use="The user asks for a reading list digest.",
+            triggers=["reading list", "digest"],
+            files=["txt"],
+            body="# Steps\n1. Collect links.\n2. Write digest.md",
+        )
+        try:
+            self.assertEqual(created.name, "reading-list-digest")
+            self.assertEqual(created.author, "user")
+            self.assertIn("reading-list-digest", [m["name"] for m in SkillRouter().route("make a reading list digest", [])])
+            with self.assertRaises(SkillError):
+                create_skill(name="reading-list-digest", description="dup", body="x")
+            with self.assertRaises(SkillError):
+                create_skill(name="broken", description="", body="x")
+            with self.assertRaises(SkillError):
+                delete_skill("svg-chart")  # built-ins are protected
+        finally:
+            delete_skill("reading-list-digest")
+        self.assertNotIn("reading-list-digest", [m["name"] for m in SkillRouter().route("make a reading list digest", [])])
+
+    # ------------------------------------------------------------------ vision
+    def test_vision_inlines_images_for_multimodal_models(self):
+        from pathlib import Path
+        import tempfile
+        import vision
+
+        png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\xf8\xcf\xc0\x50"
+            b"\x0f\x00\x04\x85\x01\x80\x84\xa9\x8c!\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "uploads").mkdir()
+            (Path(tmp) / "uploads" / "shot.png").write_bytes(png)
+            (Path(tmp) / "uploads" / "scan.pdf").write_bytes(b"%PDF-1.4")
+            files = [
+                {"filename": "shot.png", "rel_path": "uploads/shot.png"},
+                {"filename": "scan.pdf", "rel_path": "uploads/scan.pdf"},
+            ]
+
+            content, seen = vision.build_content("what is this?", files, tmp, "gemini-2.5-flash")
+            self.assertIsInstance(content, list)
+            self.assertEqual([p["type"] for p in content], ["text", "image_url"])
+            self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+            self.assertEqual(seen, ["shot.png"])  # PDFs stay with the tools
+
+            plain, seen_plain = vision.build_content("what is this?", files, tmp, "llama-3-8b")
+            self.assertIsInstance(plain, str)
+            self.assertEqual(seen_plain, [])
+            self.assertFalse(vision.model_has_vision("llama-3-8b"))
+
+    def test_vision_falls_back_when_forced_off(self):
+        import vision
+
+        self.assertFalse(vision.model_has_vision("gemini-2.5-flash", mode="off"))
+        self.assertTrue(vision.model_has_vision("unknown-model", mode="on"))
+        self.assertIn("cannot see images", vision.capability_note("llama-3-8b"))
+
+    # ------------------------------------------------------------------ server
+    def test_skills_api_routes(self):
+        """The HTTP surface for authoring + router preview."""
+        import json
+        import urllib.request
+        from web.server import AgentHttpHandler  # noqa: F401  (import guard: module loads)
+
+        payload = json.dumps({
+            "name": "api probe",
+            "description": "Created over HTTP.",
+            "body": "# Steps\n1. Do nothing.",
+            "triggers": ["api probe"],
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:8080/api/skills", data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                body = json.loads(resp.read())
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            self.skipTest("console not running on :8080")
+        self.assertEqual(body["skill"]["name"], "api-probe")
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8080/api/skills/router?q=api%20probe", timeout=3) as resp:
+                matches = json.loads(resp.read())["matches"]
+            self.assertEqual(matches[0]["name"], "api-probe")
+        finally:
+            urllib.request.urlopen(urllib.request.Request(
+                "http://127.0.0.1:8080/api/skills/api-probe", method="DELETE"), timeout=3).read()
+
+
 if __name__ == "__main__":
     unittest.main()

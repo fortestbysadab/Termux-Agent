@@ -38,6 +38,7 @@ export const addCustomMcp = (payload) =>
   api('/api/connectors/custom_mcp', { method: 'POST', body: JSON.stringify(payload) });
 export const removeConnector = (id) => api(`/api/connectors/${id}`, { method: 'DELETE' });
 
+export const getConfig = () => api('/api/config');
 export const getSkills = () => api('/api/skills').then((d) => d.skills || []);
 export const toggleSkill = (name, enabled) =>
   api(`/api/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
@@ -127,3 +128,23 @@ export async function streamChat({ sessionId, text, attachments = [], onEvent, s
     }
   }
 }
+
+/* ---------------------------------------------------------------- skills */
+export const createSkill = (payload) =>
+  api('/api/skills', { method: 'POST', body: JSON.stringify(payload) }).then((d) => d.skill);
+
+export const updateSkill = (name, payload) =>
+  api(`/api/skills/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }).then((d) => d.skill);
+
+export const deleteSkill = (name) =>
+  api(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+
+/** What would the router load for this sentence? */
+export const routeSkills = (query, files = []) => {
+  const params = new URLSearchParams({ q: query });
+  files.forEach((f) => params.append('file', f));
+  return api(`/api/skills/router?${params.toString()}`).then((d) => d.matches || []);
+};
