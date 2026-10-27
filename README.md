@@ -13,7 +13,7 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - Resource limits (CPU caps, memory caps, timeout watchdog).
 
 2. **Connectors & Custom MCP (Model Context Protocol)**:
-   - **Connectors Modal**: Beautiful UI matching standard connector hubs (GitHub, Notion, Linear, Google Drive, Docs, Sheets, Slides, Calendar, Gmail, Dropbox, Vercel, Supabase).
+   - **Connectors Modal**: Beautiful UI matching standard connector hubs (GitHub, Notion, Linear, Google Drive, Docs, Sheets, Slides, Calendar, Gmail, Dropbox, Vercel, Supabase), each with its **real brand mark** from `simple-icons` (bundled, offline, no CDN).
    - **Custom MCP Connector**: Connect any standard MCP server via local **stdio command** (e.g. `npx -y @modelcontextprotocol/server-postgres`) or **remote HTTP/SSE endpoint**.
    - Dynamic tool discovery: Tools from enabled connectors are automatically injected into the agent's active tool list.
 
@@ -41,10 +41,21 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - The React console ships **pre-built** in `web/static/`, so `python3 main.py` is still the only command you need. Node is a build-time tool for developers only.
    - Automated CI testing via GitHub Actions across Python 3.10, 3.11, and 3.12.
 
-8. **Console built on [Libraries.dev](https://libraries.dev)**:
+8. **File Uploads (attachments)**:
+   - Attach files from the composer (paperclip, drag-and-drop anywhere in the thread, or paste from the clipboard).
+   - Everything is written to `uploads/` **inside that session's workspace**, size-checked (`AGENT_MAX_UPLOAD_MB`, 25 MB default), name-sanitised and de-duplicated (`report (2).pdf`), with an extension allowlist.
+   - The agent is told exactly which files arrived, so "clean this CSV" or "turn this into a deck" works on the first try. Uploaded files are listed separately from agent output in the Workspace panel and are never modified by the agent.
+
+9. **Skills — reusable procedures that compose**:
+   - A skill is a directory of markdown: `skills/<name>/SKILL.md` with `name`, `title`, `description`, `when_to_use`, `uses[]`, `tools[]`, `icon` frontmatter. No code, no install step.
+   - **Progressive disclosure**: only `name: description — when_to_use` goes into the system prompt; the full procedure is loaded by the `use_skill` tool when the model actually needs it.
+   - **Skills calling skills**: a skill declares `uses: [a, b, c]` and `use_skill` loads it *plus* its dependencies in one call, each body headed with why it was pulled in. `report-bundle` composes `data-wrangler` + `svg-chart` + `xlsx-report` + `pdf-report` and emits a PDF, an XLSX, an SVG and a cleaned CSV, zipped.
+   - Six skills ship in the box: `data-wrangler`, `svg-chart`, `xlsx-report`, `pdf-report`, `workspace-audit`, `report-bundle`. Enable/disable any of them from the Skills screen — the catalogue and the tool list update on the next turn, and run counters are kept in SQLite.
+
+10. **Console built on [Libraries.dev](https://libraries.dev)**:
    - **Border Beam** (`border-beam`) — a single, subtle animated glow wrapped around **the chat composer only**, calm at rest, brighter and faster while the agent works.
    - **Thinking Orbs** (`thinking-orbs`) — every spinner replaced by an orb whose state is driven by the real SSE activity: `searching` (reasoning), `working` (running a command), `connecting` (calling a tool), `solving` (reading results), with crossfades between phases.
-   - **Bot Avatars** (`bot-avatars`) — the planner, the shell and the MCP bridge each get their own animated identity (plush / plastic bodies, distinct colours) that switches as control passes between them; connectors are a roster of sleeping (disabled), idle (connected) and working (currently called) bots.
+   - **Bot Avatars** (`bot-avatars`) — the planner, the shell and the MCP bridge each get their own animated identity (plush / plastic bodies, distinct colours) that switches as control passes between them. Connectors are shown as their own real brand logos, not as bots.
    - Full dark/light design system, `100dvh` mobile layout, off-canvas drawers, keyboard shortcuts, reduced-motion support and a render error boundary.
 
 ---
@@ -75,8 +86,17 @@ Open `http://localhost:8080` in your Android browser (Chrome, Firefox, Kiwi).
 ```text
 termux-agent/
 ├── main.py                  # Entry point
-├── config.py                # Environment & paths
-├── db.py                    # SQLite database (sessions, history, connectors, artifacts)
+├── config.py                # Environment & paths (uploads dir, skill dir, limits)
+├── db.py                    # SQLite database (sessions, history, connectors, artifacts, skill state)
+├── skills.py                # SKILL.md discovery, dependency loading, prompt catalogue
+├── uploads.py               # Multipart parsing, filename sanitising, uploads/ storage
+├── skills/
+│   ├── data-wrangler/SKILL.md
+│   ├── svg-chart/SKILL.md
+│   ├── xlsx-report/SKILL.md
+│   ├── pdf-report/SKILL.md
+│   ├── workspace-audit/SKILL.md
+│   └── report-bundle/SKILL.md   # uses: the four above
 ├── sandbox/
 │   ├── runner.py            # Per-session proot & subprocess terminal runner
 │   └── tracker.py           # Workspace snapshot & change detection

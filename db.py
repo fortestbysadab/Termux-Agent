@@ -59,6 +59,13 @@ def init_db() -> None:
             FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS skills (
+            name TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            runs INTEGER NOT NULL DEFAULT 0,
+            last_used REAL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
         """)
@@ -278,3 +285,41 @@ def list_artifacts(session_id: str) -> list[dict[str, Any]]:
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# --- Skills ---
+
+def get_skill_states() -> dict[str, dict[str, Any]]:
+    """{name: {enabled, runs, last_used}} for every skill we have a row for."""
+    with get_connection() as conn:
+        rows = conn.execute("SELECT name, enabled, runs, last_used FROM skills").fetchall()
+        return {
+            r["name"]: {
+                "enabled": bool(r["enabled"]),
+                "runs": r["runs"],
+                "last_used": r["last_used"],
+            }
+            for r in rows
+        }
+
+def set_skill_enabled(name: str, enabled: bool) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO skills (name, enabled) VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET enabled = excluded.enabled
+            """,
+            (name, 1 if enabled else 0),
+        )
+
+def record_skill_run(name: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO skills (name, enabled, runs, last_used) VALUES (?, 1, 1, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                runs = skills.runs + 1,
+                last_used = excluded.last_used
+            """,
+            (name, time.time()),
+        )

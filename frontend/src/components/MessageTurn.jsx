@@ -3,6 +3,7 @@ import { AgentAvatar, ActivityLine } from './AgentAvatar.jsx';
 import { ToolRunCard, ArtifactCard, ErrorCard } from './cards.jsx';
 import { formatTime, renderMarkdown } from '../util.js';
 import { AGENTS } from '../agents.js';
+import { Icon } from './ui.jsx';
 
 /**
  * One conversation turn. Assistant turns carry the agent identity, its tool
@@ -32,6 +33,16 @@ export default function MessageTurn({
       <article className="turn turn-user">
         <div className="turn-main">
           <div className="user-bubble">{message.content}</div>
+          {message.uploads?.length > 0 && (
+            <div className="user-files">
+              {message.uploads.map((f) => (
+                <span className="user-file" key={f.rel_path || f.filename}>
+                  <Icon.Paperclip size={12} />
+                  {f.filename}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="turn-head turn-head-user">
             <time>{formatTime(message.created_at)}</time>
           </div>

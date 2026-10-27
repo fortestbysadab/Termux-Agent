@@ -7,6 +7,8 @@ import WorkspacePanel from './components/WorkspacePanel.jsx';
 import ConnectorsView from './components/ConnectorsView.jsx';
 import FilesView from './components/FilesView.jsx';
 import PreviewModal from './components/PreviewModal.jsx';
+import SkillsView from './components/SkillsView.jsx';
+import { useUploader, UploadChips, DropZone } from './components/Uploader.jsx';
 import { ConnectorConfigModal, AddMcpModal } from './components/Modals.jsx';
 import { OrbSwap } from './components/AgentAvatar.jsx';
 import { Icon, Button } from './components/ui.jsx';
@@ -40,6 +42,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [files, setFiles] = useState([]);
   const [connectors, setConnectors] = useState([]);
+  const [skills, setSkills] = useState([]);
 
   /* ------------------------------------------------------------- ui state */
   const [input, setInput] = useState('');
@@ -51,6 +54,8 @@ export default function App() {
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [booted, setBooted] = useState(false);
+  // Files uploaded since the last message, attached to the next one.
+  const [pendingFiles, setPendingFiles] = useState([]);
 
   const threadRef = useRef(null);
   const stickToBottom = useRef(true);
@@ -74,10 +79,15 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const [list, conns] = await Promise.all([client.getSessions(), client.getConnectors()]);
+        const [list, conns, skillList] = await Promise.all([
+          client.getSessions(),
+          client.getConnectors(),
+          client.getSkills().catch(() => []),
+        ]);
         if (cancelled) return;
         setSessions(list);
         setConnectors(conns);
+        setSkills(skillList);
         if (list.length > 0) await openSession(list[0].id, { silent: true });
         else await startNewChat({ silent: true });
       } catch (err) {
@@ -168,6 +178,33 @@ export default function App() {
   }
 
   /* ----------------------------------------------------------- connectors */
+  async function reloadSkills() {
+    try {
+      setSkills(await client.getSkills());
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function toggleSkill(skill) {
+    try {
+      await client.toggleSkill(skill.name, !skill.enabled);
+      setSkills((prev) =>
+        prev.map((s) => (s.name === skill.name ? { ...s, enabled: !s.enabled } : s)),
+      );
+    } catch (err) {
+      window.alert(`Could not change the skill: ${err.message}`);
+    }
+  }
+
+  function trySkill(skill) {
+    setScreen('chat');
+    setInput(
+      `Use the "${skill.name}" skill: ${skill.when_to_use || skill.description}`,
+    );
+    requestAnimationFrame(() => document.getElementById('composer-input')?.focus());
+  }
+
   async function reloadConnectors() {
     try {
       setConnectors(await client.getConnectors());
@@ -303,6 +340,42 @@ export default function App() {
       );
       return;
     }
+    if (type === 'skill_start') {
+      updateLive((l) =>
+        l
+          ? {
+              ...l,
+              agent: AGENTS.skill,
+              phase: PHASES.loading,
+              detail: data.name,
+              runs: [
+                ...l.runs,
+                { tool: `use_skill:${data.name}`, kind: 'skill', command: data.name, state: 'running' },
+              ],
+            }
+          : l,
+      );
+      return;
+    }
+    if (type === 'skill_done') {
+      updateLive((l) =>
+        l
+          ? {
+              ...l,
+              phase: PHASES.solving,
+              detail: null,
+              runs: l.runs.map((r) =>
+                r.state === 'running' && String(r.tool).startsWith('use_skill')
+                  ? { ...data, state: 'done' }
+                  : r,
+              ),
+            }
+          : l,
+      );
+      // a skill run changes its counters on the Skills screen
+      client.getSkills().then(setSkills).catch(() => {});
+      return;
+    }
     if (type === 'error') {
       updateLive((l) => (l ? { ...l, error: data } : l));
       return;
@@ -335,12 +408,22 @@ export default function App() {
   const busy = live !== null;
 
   async function send(text) {
-    if (!text || !currentSessionId || busy) return;
+    const attachments = pendingFiles;
+    if ((!text && attachments.length === 0) || !currentSessionId || busy) return;
     setInput('');
     stickToBottom.current = true;
 
     const now = Date.now() / 1000;
-    setMessages((prev) => [...prev, { role: 'user', content: text, created_at: now }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'user',
+        content: text || `Sent ${attachments.length} file${attachments.length === 1 ? '' : 's'}`,
+        created_at: now,
+        uploads: attachments,
+      },
+    ]);
+    setPendingFiles([]);
     liveRef.current = {
       phase: PHASES.searching,
       detail: null,
@@ -358,7 +441,8 @@ export default function App() {
     try {
       await client.streamChat({
         sessionId: currentSessionId,
-        text,
+        text: text || 'I attached some files — take a look.',
+        attachments,
         signal: controller.signal,
         onEvent: handleEvent,
       });
@@ -423,18 +507,43 @@ export default function App() {
   }, [isCompact]);
 
   /* ------------------------------------------------------------- derived */
+  const uploader = useUploader({
+    sessionId: currentSessionId,
+    onUploaded: (stored) => {
+      setPendingFiles((prev) => [...prev, ...stored]);
+      refreshFiles();
+    },
+    onError: (message) => window.alert(message),
+  });
+  const uploading = uploader.queue.some((item) => item.status === 'uploading');
+
   const activeSession = sessions.find((s) => s.id === currentSessionId);
   const connectorCount = connectors.filter((c) => c.enabled).length;
   const liveTool = live?.runs?.find((r) => r.state === 'running')?.tool;
+  // Map the running tool back to the connector that owns it, so the brand tile
+  // can pulse while its tool is being called.
+  const liveConnectorId = useMemo(() => {
+    if (!liveTool) return null;
+    const enabled = connectors.filter((c) => c.enabled);
+    const match = enabled.find((c) => {
+      const id = c.id.toLowerCase();
+      const base = id.replace(/^mcp_/, '');
+      return String(liveTool).toLowerCase().startsWith(`${base}_`)
+        || String(liveTool).toLowerCase().startsWith(`${id}_`);
+    });
+    return match?.id || null;
+  }, [liveTool, connectors]);
 
   const title = useMemo(() => {
     if (screen === 'connectors') return 'Connectors';
+    if (screen === 'skills') return 'Skills';
     if (screen === 'files') return 'Workspace files';
     return activeSession?.title || 'New chat';
   }, [screen, activeSession]);
 
   const subtitle = useMemo(() => {
     if (screen === 'connectors') return `${connectorCount} connected`;
+    if (screen === 'skills') return `${skills.filter((s) => s.enabled).length} enabled`;
     if (screen === 'files') return `${files.length} file${files.length === 1 ? '' : 's'} in this session`;
     return currentSessionId ? `sandbox · ${currentSessionId.slice(0, 8)}` : undefined;
   }, [screen, connectorCount, files.length, currentSessionId]);
@@ -457,6 +566,7 @@ export default function App() {
           if (isCompact) setSidebarOpen(false);
         }}
         connectorCount={connectorCount}
+        skillCount={skills.filter((x) => x.enabled).length}
         fileCount={files.length}
         theme={theme}
         onTheme={setTheme}
@@ -487,6 +597,22 @@ export default function App() {
         <div className="stage">
           {screen === 'chat' && (
             <section className="chat-column" aria-label="Conversation">
+              <input
+                ref={uploader.inputRef}
+                type="file"
+                multiple
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(e) => {
+                  uploader.run(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <DropZone
+                disabled={busy || !currentSessionId}
+                onFiles={(fileList) => uploader.run(fileList)}
+              >
               <div className="thread" ref={threadRef} onScroll={onThreadScroll}>
                 <div className="thread-inner">
                   {messages.length === 0 && !live && (
@@ -532,11 +658,19 @@ export default function App() {
                 </div>
               </div>
 
+              </DropZone>
+
+              <UploadChips queue={uploader.queue} onDismiss={uploader.dismiss} />
+
               <Composer
                 value={input}
                 onChange={setInput}
                 onSend={send}
+                onAttach={() => uploader.inputRef.current?.click()}
+                onPasteFiles={(fileList) => uploader.run(fileList)}
                 busy={busy}
+                uploading={uploading}
+                attachmentCount={pendingFiles.length}
                 theme={resolvedTheme}
                 reduced={reduced}
                 placeholder={
@@ -555,9 +689,16 @@ export default function App() {
               onConfigure={(c) => setConfigTarget(c)}
               onAddMcp={() => setAddMcpOpen(true)}
               onDelete={deleteConnector}
-              theme={resolvedTheme}
-              reduced={reduced}
-              liveTool={liveTool}
+              liveConnector={liveConnectorId}
+            />
+          )}
+
+          {screen === 'skills' && (
+            <SkillsView
+              skills={skills}
+              onToggle={toggleSkill}
+              onTry={trySkill}
+              onRefresh={reloadSkills}
             />
           )}
 

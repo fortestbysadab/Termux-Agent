@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Icon, IconButton } from './ui.jsx';
 import { formatBytes, fileExt } from '../util.js';
 
@@ -67,10 +68,19 @@ export default function WorkspacePanel({ open, onClose, files, sessionId, onPrev
           </p>
         ) : (
           <ul className="ws-tree">
-            {files.map((f) => {
+            {files.map((f, i) => {
               const href = `/api/workspace/${sessionId}/file?path=${encodeURIComponent(f.rel_path)}`;
+              const isUpload = f.rel_path.startsWith('uploads/');
+              const prev = files[i - 1];
+              const groupStart = i === 0 || (prev && prev.rel_path.startsWith('uploads/') !== isUpload);
               return (
-                <li key={f.rel_path} className="ws-file">
+                <Fragment key={f.rel_path}>
+                {groupStart && (
+                  <li className="ws-group-label" aria-hidden="true">
+                    {isUpload ? 'Uploads' : 'Agent output'}
+                  </li>
+                )}
+                <li key={f.rel_path} className={`ws-file ${isUpload ? 'is-upload' : ''}`}>
                   <span className="ws-ext">{fileExt(f.name)}</span>
                   <span className="ws-file-info">
                     <span className="ws-file-name" title={f.name}>
@@ -91,6 +101,7 @@ export default function WorkspacePanel({ open, onClose, files, sessionId, onPrev
                     </a>
                   </span>
                 </li>
+                </Fragment>
               );
             })}
           </ul>

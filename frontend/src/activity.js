@@ -12,6 +12,7 @@ export const PHASES = {
   connecting: { id: 'connecting', orb: 'connecting', label: 'Calling tool' },
   solving: { id: 'solving', orb: 'solving', label: 'Reading results' },
   composing: { id: 'composing', orb: 'composing', label: 'Composing response' },
+  loading: { id: 'loading', orb: 'weaving', label: 'Loading skill' },
 };
 
 /** Map a raw SSE event to the phase it implies. */
@@ -26,6 +27,10 @@ export function phaseForEvent(type, payload) {
     case 'connector_start':
       return { phase: PHASES.connecting, detail: payload?.tool || null };
     case 'connector_done':
+      return { phase: PHASES.solving, detail: null };
+    case 'skill_start':
+      return { phase: PHASES.loading, detail: payload?.name || null };
+    case 'skill_done':
       return { phase: PHASES.solving, detail: null };
     case 'done':
       return { phase: PHASES.composing, detail: null };

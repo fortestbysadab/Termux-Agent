@@ -5,11 +5,19 @@ import logging
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Optional
-from db import add_message, get_messages, record_artifact, update_session_title
+from db import (
+    add_message,
+    get_messages,
+    get_skill_states,
+    record_artifact,
+    record_skill_run,
+    update_session_title,
+)
 from sandbox.runner import SessionSandbox
 from sandbox.tracker import snapshot_workspace, diff_workspace
 from connectors.manager import ConnectorManager
 from agent.planner import LLMPlanner
+from skills import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +43,17 @@ WORKFLOW RULES:
   2. NEVER create scratch test files (such as `test.xlsx`, `test.pdf`, `dummy.txt`) in the workspace root. If you need temporary files, write them into `.tmp/` or delete them before completing the turn (`rm -f test.*`).
   3. Clean up helper generator scripts (e.g. `generate_sheets.py`, `generate_pdf.py`). Execute code via `python3 -c "..."` or remove the script after running (`rm -f generate_*.py`).
   4. Only the exact asking deliverable files should remain in the workspace.
+- SKILLS: You have reusable procedures ("skills"). The catalogue is below.
+  1. When a request matches a skill's `when_to_use`, call `use_skill` FIRST with that name and follow its steps exactly.
+  2. Calling a skill loads its full instructions into the conversation. A skill may in turn load further skills (composition) — follow all of them.
+  3. Do not invent a procedure when a skill covers it, and do not call `use_skill` for chit-chat.
+  4. `list_skills` shows everything available, including skills missing from this catalogue.
+- UPLOADED FILES: files the user attached live in the `uploads/` directory of the workspace. Read them with shell commands; never modify or delete anything in `uploads/`.
 - If the task is purely conversational or an inquiry without file requests, answer directly in chat.
 - After running terminal commands, explain the results clearly. Be concise, direct, and helpful.
+
+SKILL CATALOGUE (call `use_skill` before doing the work):
+{catalogue}
 """
 
 DELIVERABLE_EXTENSIONS = frozenset({
@@ -120,16 +137,79 @@ TERMINAL_TOOL_SCHEMA = {
     }
 }
 
+LIST_SKILLS_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "list_skills",
+        "description": "List the available skills (reusable procedures) with a one-line description of each.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional filter, e.g. 'pdf' or 'chart'.",
+                }
+            },
+        },
+    },
+}
+
+USE_SKILL_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "use_skill",
+        "description": "Load a skill's full instructions before doing the task. Call this whenever a skill matches what the user asked for.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name from the catalogue, e.g. 'svg-chart'.",
+                }
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+
+def _attachment_note(attachments: Optional[list[dict[str, Any]]]) -> str:
+    """Turn the upload manifest into a short note appended to the user's message."""
+    if not attachments:
+        return ""
+    listing = "\n".join(
+        f"- {a.get('rel_path') or 'uploads/' + str(a.get('filename'))} ({a.get('size', 0)} bytes)"
+        for a in attachments
+        if a.get("filename")
+    )
+    if not listing:
+        return ""
+    return (
+        f"\n\n[The user attached these files to the workspace]\n{listing}\n"
+        "Read them from the uploads/ directory before answering."
+    )
+
+
 class AgentRunner:
     def __init__(self, connector_manager: ConnectorManager, planner: LLMPlanner = None):
         self.connectors = connector_manager
         self.planner = planner or LLMPlanner()
+        self.skills = SkillRegistry()
+
+    # -------------------------------------------------------------- skills
+    def _skill_states(self) -> dict[str, bool]:
+        return {name: state["enabled"] for name, state in get_skill_states().items()}
+
+    def _system_prompt(self) -> str:
+        catalogue = self.skills.catalog(self._skill_states()) or "- (no skills installed)"
+        return SYSTEM_PROMPT.replace("{catalogue}", catalogue)
 
     def run_turn(
         self,
         session_id: str,
         user_text: str,
-        callback: Optional[Callable[[str, dict], None]] = None
+        callback: Optional[Callable[[str, dict], None]] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         """Execute one complete conversational agent turn with optional real-time event callbacks."""
         sandbox = SessionSandbox(session_id)
@@ -141,9 +221,11 @@ class AgentRunner:
         history = get_messages(session_id)
         active_tools, routing = self.connectors.get_active_tools()
         all_tools = [TERMINAL_TOOL_SCHEMA] + active_tools
+        if self.skills.enabled(self._skill_states()):
+            all_tools = all_tools + [LIST_SKILLS_TOOL_SCHEMA, USE_SKILL_TOOL_SCHEMA]
 
         # 3. Assemble messages for LLM
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": self._system_prompt()}]
         for m in history[-14:]:  # Keep recent context
             role = m["role"]
             content = m["content"] or ""
@@ -154,8 +236,9 @@ class AgentRunner:
                     content = content + f"\n(Files available in workspace: {', '.join(m['files_generated'])})"
                 messages.append({"role": "assistant", "content": content})
 
-        # Append new user message
-        messages.append({"role": "user", "content": user_text})
+        # Append new user message (with any uploaded files called out)
+        prompt_text = user_text + _attachment_note(attachments)
+        messages.append({"role": "user", "content": prompt_text})
         add_message(session_id, "user", user_text)
 
         # Auto-update session title on first turn
@@ -236,6 +319,74 @@ class AgentRunner:
                     # Notify UI of command completion
                     if callback:
                         callback("command_done", cmd_info)
+                elif t_name in ("use_skill", "list_skills"):
+                    # Skills: load instructions (and the skills they compose) into context
+                    if t_name == "list_skills":
+                        query = str(t_args.get("query", "") or "").strip().lower()
+                        skills = [
+                            s for s in self.skills.enabled(self._skill_states())
+                            if not query
+                            or query in s.name
+                            or query in s.description.lower()
+                            or query in s.when_to_use.lower()
+                        ]
+                        listing = "\n".join(
+                            f"- {s.name} ({s.title}): {s.description}"
+                            + (f" [uses: {', '.join(s.uses)}]" if s.uses else "")
+                            for s in skills
+                        ) or "No skills matched that query."
+                        tool_content = listing
+                        skill_info = {
+                            "tool": "list_skills",
+                            "command": f"list_skills{(': ' + query) if query else ''}",
+                            "stdout": listing,
+                            "stderr": "",
+                            "exit_code": 0,
+                            "duration_ms": 0,
+                            "ok": True,
+                            "kind": "skill",
+                        }
+                        collected_tool_runs.append(skill_info)
+                        if callback:
+                            callback("skill_done", skill_info)
+                    else:
+                        name = str(t_args.get("name", "") or "").strip()
+                        text, loaded, missing = self.skills.load_with_dependencies(name)
+
+                        if callback:
+                            callback("skill_start", {"name": name, "loaded": loaded})
+
+                        if not loaded:
+                            tool_content = (
+                                f"Skill {name!r} is not available. "
+                                f"Call list_skills to see the installed skills."
+                            )
+                            ok = False
+                        else:
+                            tool_content = (
+                                f"Loaded skill(s): {', '.join(loaded)}. "
+                                "Follow these instructions now.\n\n" + text
+                            )
+                            ok = True
+                            record_skill_run(loaded[0])
+
+                        skill_info = {
+                            "tool": f"use_skill:{name}",
+                            "name": name,
+                            "loaded": loaded,
+                            "missing": missing,
+                            "command": name,
+                            "stdout": tool_content[:8000],
+                            "stderr": "",
+                            "exit_code": 0 if ok else 1,
+                            "duration_ms": 0,
+                            "ok": ok,
+                            "kind": "skill",
+                        }
+                        collected_tool_runs.append(skill_info)
+                        if callback:
+                            callback("skill_done", skill_info)
+
                 else:
                     # Connector or MCP tool
                     if callback:

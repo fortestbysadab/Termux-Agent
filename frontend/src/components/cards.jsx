@@ -12,15 +12,18 @@ import { OrbSwap } from './AgentAvatar.jsx';
 export function ToolRunCard({ run, theme, reduced, index = 0 }) {
   // History rows arrive as {name, detail:{...}}; live rows are already flat.
   const r = run.detail ? { ...run.detail } : run;
-  const isTerminal = r.tool === 'terminal';
+  const isSkill = r.kind === 'skill' || String(r.tool || '').startsWith('use_skill');
+  const isTerminal = r.tool === 'terminal' && !isSkill;
   const ok = r.ok !== false;
   const running = r.state === 'running';
   const [open, setOpen] = useState(false);
 
   const title = isTerminal ? r.command : r.tool || r.name || run.name || 'tool';
-  const output = isTerminal
-    ? `${r.stdout || ''}${r.stderr ? `\n${r.stderr}` : ''}`.trim()
-    : JSON.stringify(r.result ?? {}, null, 2);
+  const output = isSkill
+    ? r.stdout || `Loaded: ${(r.loaded || []).join(', ') || r.command}`
+    : isTerminal
+      ? `${r.stdout || ''}${r.stderr ? `\n${r.stderr}` : ''}`.trim()
+      : JSON.stringify(r.result ?? {}, null, 2);
 
   return (
     <div
@@ -33,9 +36,15 @@ export function ToolRunCard({ run, theme, reduced, index = 0 }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        <span className={`tool-kind ${isTerminal ? 'terminal' : 'mcp'}`}>
-          {isTerminal ? <Icon.Terminal size={13} /> : <Icon.Plug size={13} />}
-          {isTerminal ? 'bash' : 'mcp'}
+        <span className={`tool-kind ${isSkill ? 'skill' : isTerminal ? 'terminal' : 'mcp'}`}>
+          {isSkill ? (
+            <Icon.Sparkle size={13} />
+          ) : isTerminal ? (
+            <Icon.Terminal size={13} />
+          ) : (
+            <Icon.Plug size={13} />
+          )}
+          {isSkill ? 'skill' : isTerminal ? 'bash' : 'mcp'}
         </span>
 
         {running ? (

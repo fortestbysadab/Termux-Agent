@@ -33,6 +33,15 @@ DATA_DIR = Path(os.environ.get("AGENT_DATA_DIR", Path.home() / ".termux_agent_da
 WORKSPACES_DIR = DATA_DIR / "workspaces"
 DB_PATH = DATA_DIR / "agent.db"
 
+# Uploads live inside each session workspace so the agent can read them
+# with ordinary shell commands, and so they are covered by the ZIP download.
+UPLOADS_SUBDIR = "uploads"
+MAX_UPLOAD_BYTES = int(os.environ.get("AGENT_MAX_UPLOAD_MB", "25")) * 1024 * 1024
+
+# Skills: markdown procedures shipped with the repo (read-only at runtime).
+SKILLS_DIR = Path(os.environ.get("AGENT_SKILLS_DIR", Path(__file__).resolve().parent / "skills"))
+SKILLS_ENABLED_BY_DEFAULT = os.environ.get("AGENT_SKILLS_DEFAULT", "1") not in ("0", "false", "no")
+
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)

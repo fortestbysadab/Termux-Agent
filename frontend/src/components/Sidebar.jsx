@@ -13,6 +13,7 @@ export default function Sidebar({
   screen,
   onScreen,
   connectorCount,
+  skillCount,
   fileCount,
   theme,
   onTheme,
@@ -71,6 +72,16 @@ export default function Sidebar({
           <Icon.Plug size={17} />
           <span>Connectors</span>
           {connectorCount > 0 && <span className="count-pill">{connectorCount}</span>}
+        </button>
+        <button
+          type="button"
+          className={`nav-item ${screen === 'skills' ? 'is-on' : ''}`}
+          aria-current={screen === 'skills' ? 'page' : undefined}
+          onClick={() => onScreen('skills')}
+        >
+          <Icon.Sparkle size={17} />
+          <span>Skills</span>
+          {skillCount > 0 && <span className="count-pill">{skillCount}</span>}
         </button>
         <button
           type="button"

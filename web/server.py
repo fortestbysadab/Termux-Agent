@@ -9,9 +9,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from config import HOST, PORT, WORKSPACES_DIR
+from config import HOST, PORT, MAX_UPLOAD_BYTES, WORKSPACES_DIR
 from db import (
     init_db,
+    get_skill_states,
+    set_skill_enabled,
     list_sessions,
     create_session,
     get_session,
@@ -24,6 +26,8 @@ from db import (
     delete_connector,
 )
 from connectors.manager import ConnectorManager
+from skills import SkillRegistry
+from uploads import UploadError, parse_multipart, store_uploads
 from agent.loop import AgentRunner
 from sandbox.runner import SessionSandbox
 from sandbox.tracker import snapshot_workspace
@@ -104,6 +108,7 @@ def parse_spreadsheet_data(target: Path) -> dict:
 class AgentHttpHandler(BaseHTTPRequestHandler):
     runner: AgentRunner
     connector_manager: ConnectorManager
+    skill_registry: SkillRegistry
 
     def _json(self, status: int, data: Any):
         body = json.dumps(data, indent=2).encode("utf-8")
@@ -116,13 +121,20 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_json(self) -> dict:
+    def _read_body(self) -> bytes:
+        """Read the request body exactly once (JSON *or* multipart)."""
         length = int(self.headers.get("Content-Length", 0))
         if length <= 0:
+            return b""
+        return self.rfile.read(length)
+
+    def _read_json(self, raw: bytes | None = None) -> dict:
+        if raw is None:
+            raw = self._read_body()
+        if not raw:
             return {}
-        raw = self.rfile.read(length).decode("utf-8")
         try:
-            return json.loads(raw)
+            return json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
 
@@ -162,6 +174,19 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         elif path == "/api/connectors":
             summary = self.connector_manager.get_all_connectors_summary()
             self._json(200, {"connectors": summary})
+            return
+
+        elif path == "/api/skills":
+            states = get_skill_states()
+            skills = [
+                skill.to_dict(
+                    enabled=states.get(name, {}).get("enabled", True),
+                    runs=states.get(name, {}).get("runs", 0),
+                    last_used=states.get(name, {}).get("last_used"),
+                )
+                for name, skill in sorted(self.skill_registry.all().items())
+            ]
+            self._json(200, {"skills": skills})
             return
 
         elif path.startswith("/api/workspace/"):
@@ -280,7 +305,8 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        body = self._read_json()
+        raw_body = self._read_body()
+        body = self._read_json(raw_body)
 
         if path == "/api/sessions":
             title = body.get("title", "New chat")
@@ -295,6 +321,7 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "session_id and text are required"})
                 return
 
+            attachments = body.get("attachments") or []
             is_stream = body.get("stream", True)
             if is_stream:
                 self.send_response(HTTPStatus.OK)
@@ -313,7 +340,9 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                         pass
 
                 try:
-                    self.runner.run_turn(session_id, text, callback=sse_callback)
+                    self.runner.run_turn(
+                        session_id, text, callback=sse_callback, attachments=attachments
+                    )
                 except Exception as exc:
                     sse_callback("error", {
                         "title": "Turn Execution Error",
@@ -325,11 +354,56 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 return
             else:
                 try:
-                    outcome = self.runner.run_turn(session_id, text)
+                    outcome = self.runner.run_turn(session_id, text, attachments=attachments)
                     self._json(200, outcome)
                 except Exception as e:
                     self._json(500, {"error": f"Agent error: {str(e)}"})
                 return
+
+        elif path.startswith("/api/workspace/") and path.endswith("/upload"):
+            parts = [p for p in path.split("/") if p]
+            # /api/workspace/<session_id>/upload
+            if len(parts) != 4:
+                self._json(404, {"error": "Endpoint not found"})
+                return
+            session_id = parts[2]
+            if not get_session(session_id):
+                self._json(404, {"error": "Session not found"})
+                return
+
+            if not raw_body:
+                self._json(400, {"error": "Empty upload."})
+                return
+            if len(raw_body) > MAX_UPLOAD_BYTES * 4:
+                self._json(
+                    413,
+                    {"error": f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."},
+                )
+                return
+
+            raw = raw_body
+            try:
+                parsed = parse_multipart(self.headers.get("Content-Type", ""), raw)
+                sandbox = SessionSandbox(session_id)
+                stored = store_uploads(sandbox.workspace_dir, parsed)
+            except UploadError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": f"Upload failed: {exc}"})
+                return
+
+            self._json(201, {"files": stored})
+            return
+
+        elif path.startswith("/api/skills/") and path.endswith("/toggle"):
+            name = path.split("/")[3]
+            enabled = body.get("enabled")
+            if enabled is None:
+                enabled = not get_skill_states().get(name, {}).get("enabled", True)
+            set_skill_enabled(name, bool(enabled))
+            self._json(200, {"id": name, "enabled": bool(enabled)})
+            return
 
         elif path.startswith("/api/connectors/") and path.endswith("/toggle"):
             cid = path.split("/")[3]
@@ -431,9 +505,11 @@ def run_server():
     init_db()
     connector_manager = ConnectorManager()
     runner = AgentRunner(connector_manager=connector_manager)
+    skill_registry = SkillRegistry()
 
     AgentHttpHandler.runner = runner
     AgentHttpHandler.connector_manager = connector_manager
+    AgentHttpHandler.skill_registry = skill_registry
 
     server = ThreadingHTTPServer((HOST, PORT), AgentHttpHandler)
     print(f"🚀 Termux Agent running at http://{HOST}:{PORT}")

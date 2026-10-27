@@ -23,12 +23,20 @@ export const AGENTS = {
     role: 'External tools',
     bot: { type: 'hexagon', color: '#f0a35e', shading: 'plastic' },
   },
+  skill: {
+    id: 'skill',
+    name: 'Skill',
+    role: 'Loaded procedure',
+    bot: { type: 'star', color: '#f2c14e', shading: 'plastic' },
+  },
 };
 
 /** Which worker is acting, given the live tool that is running. */
 export function agentForTool(tool) {
   if (!tool) return AGENTS.assistant;
-  return tool === 'terminal' ? AGENTS.terminal : AGENTS.connector;
+  if (tool === 'terminal') return AGENTS.terminal;
+  if (String(tool).startsWith('use_skill') || tool === 'list_skills') return AGENTS.skill;
+  return AGENTS.connector;
 }
 
 /**

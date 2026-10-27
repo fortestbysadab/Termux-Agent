@@ -38,6 +38,39 @@ export const addCustomMcp = (payload) =>
   api('/api/connectors/custom_mcp', { method: 'POST', body: JSON.stringify(payload) });
 export const removeConnector = (id) => api(`/api/connectors/${id}`, { method: 'DELETE' });
 
+export const getSkills = () => api('/api/skills').then((d) => d.skills || []);
+export const toggleSkill = (name, enabled) =>
+  api(`/api/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
+
+/**
+ * Uploads go to <workspace>/uploads. Uses XHR rather than fetch because it is
+ * the only way to report upload progress on Safari.
+ */
+export function uploadFiles(sessionId, files, onProgress) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const file of files) form.append('file', file, file.name);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/workspace/${sessionId}/upload`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        /* non-JSON body */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(payload.files || []);
+      else reject(new Error(payload.error || `Upload failed (HTTP ${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.send(form);
+  });
+}
+
 export const getWorkspaceFiles = (sessionId) =>
   api(`/api/workspace/${sessionId}/files`).then((d) => d.files || []);
 export const getPreview = (sessionId, relPath) =>
@@ -53,11 +86,11 @@ export const zipUrl = (sessionId) => `/api/workspace/${sessionId}/zip`;
  * Note the server answers a POST with `text/event-stream`, so we can't use
  * EventSource — we read the body stream and parse the frames ourselves.
  */
-export async function streamChat({ sessionId, text, onEvent, signal }) {
+export async function streamChat({ sessionId, text, attachments = [], onEvent, signal }) {
   const resp = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, text, stream: true }),
+    body: JSON.stringify({ session_id: sessionId, text, stream: true, attachments }),
     signal,
   });
 

@@ -324,5 +324,128 @@ class TestTermuxAgent(unittest.TestCase):
         ):
             self.assertIn(marker, bundle)
 
+    # ------------------------------------------------------------------ skills
+    def test_skill_registry_discovers_every_skill(self):
+        """Every SKILL.md on disk parses without error and carries frontmatter."""
+        from skills import SkillRegistry
+
+        registry = SkillRegistry()
+        skills = registry.all()
+        names = set(skills)
+        for expected in ("data-wrangler", "svg-chart", "xlsx-report", "pdf-report", "report-bundle"):
+            self.assertIn(expected, names)
+        for skill in skills.values():
+            self.assertIsNone(skill.error, f"{skill.name}: {skill.error}")
+            self.assertTrue(skill.description, f"{skill.name} has no description")
+            self.assertTrue(skill.when_to_use, f"{skill.name} has no when_to_use")
+
+    def test_skill_can_call_other_skills(self):
+        """report-bundle pulls in its four dependencies in one load."""
+        from skills import SkillRegistry
+
+        text, loaded, missing = SkillRegistry().load_with_dependencies("report-bundle")
+        self.assertEqual(missing, [])
+        self.assertIn("report-bundle", loaded)
+        for dep in ("data-wrangler", "svg-chart", "xlsx-report", "pdf-report"):
+            self.assertIn(dep, loaded)
+            self.assertIn(dep, text)
+        self.assertGreater(len(text), 2000)
+
+    def test_skill_catalogue_is_progressive(self):
+        """The prompt only ever gets name + description + when_to_use."""
+        from skills import SkillRegistry
+
+        registry = SkillRegistry()
+        states = {name: True for name in registry.all()}
+        catalogue = registry.catalog(states)
+        self.assertIn("svg-chart", catalogue)
+        self.assertLess(len(catalogue), 5000)
+        # bodies stay out of the prompt until use_skill is called
+        body_marker = "## Procedure" if "## Procedure" in registry.get("svg-chart").body else None
+        if body_marker:
+            self.assertNotIn(body_marker, catalogue)
+
+    def test_skill_toggle_roundtrip(self):
+        from db import get_skill_states, set_skill_enabled
+        from skills import SkillRegistry
+
+        set_skill_enabled("svg-chart", False)
+        set_skill_enabled("svg-chart", False)
+        states = {n: st["enabled"] for n, st in get_skill_states().items()}
+        self.assertFalse(states["svg-chart"])
+        self.assertNotIn("svg-chart", [s.name for s in SkillRegistry().enabled(states)])
+        set_skill_enabled("svg-chart", True)
+        states = {n: st["enabled"] for n, st in get_skill_states().items()}
+        self.assertTrue(states["svg-chart"])
+        self.assertIn("svg-chart", [s.name for s in SkillRegistry().enabled(states)])
+
+    # ----------------------------------------------------------------- uploads
+    def test_upload_sanitises_names(self):
+        from uploads import sanitize_filename
+
+        self.assertEqual(sanitize_filename("../../etc/passwd.csv"), "passwd.csv")
+        self.assertEqual(sanitize_filename("my report (final).csv"), "my report (final).csv")
+        self.assertNotIn("/", sanitize_filename("a/b/c.csv"))
+        self.assertTrue(sanitize_filename("weird" + chr(0) + "name.csv"))
+
+    def test_upload_rejects_bad_extensions(self):
+        from uploads import check_extension, UploadError
+
+        check_extension("notes.csv")
+        with self.assertRaises(UploadError):
+            check_extension("payload.exe")
+        with self.assertRaises(UploadError):
+            check_extension("noextension")
+
+    def test_upload_dedupes_and_stores_in_uploads_dir(self):
+        from uploads import store_uploads
+
+        workspace = Path(WORKSPACES_DIR) / "test_upload_ws"
+        shutil.rmtree(workspace, ignore_errors=True)
+        workspace.mkdir(parents=True, exist_ok=True)
+        try:
+            first = store_uploads(workspace, [{"filename": "scores.csv", "data": b"a,b\n1,2\n"}])
+            second = store_uploads(workspace, [{"filename": "scores.csv", "data": b"c,d\n3,4\n"}])
+            self.assertEqual(first[0]["rel_path"], "uploads/scores.csv")
+            self.assertEqual(second[0]["rel_path"], "uploads/scores (2).csv")
+            self.assertTrue((workspace / "uploads" / "scores.csv").is_file())
+            self.assertEqual(first[0]["size"], 8)
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    def test_upload_reaches_the_agent_prompt(self):
+        """An uploaded file is named in the turn the model receives."""
+        from uploads import store_uploads
+        from agent.loop import _attachment_note
+
+        session = create_session("upload prompt test")
+        workspace = Path(WORKSPACES_DIR) / session["id"]
+        workspace.mkdir(parents=True, exist_ok=True)
+        try:
+            stored = store_uploads(workspace, [{"filename": "scores.csv", "data": b"a,b\n1,2\n"}])
+            self.assertTrue((workspace / "uploads" / "scores.csv").is_file())
+            note = _attachment_note(stored)
+            self.assertIn("uploads/scores.csv", note)
+            self.assertIn("uploads/", note)
+            self.assertEqual(_attachment_note([]), "")
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+            delete_session(session["id"])
+
+    # -------------------------------------------------------------------- icons
+    def test_brand_icons_are_real_marks(self):
+        """Connector icons come from simple-icons, not the bot avatars."""
+        from pathlib import Path
+
+        from web.server import STATIC_DIR as STATIC
+
+        src = (Path("frontend/src/brandIcons.jsx")).read_text(encoding="utf-8")
+        self.assertIn("simple-icons", src)
+        self.assertNotIn("BotAvatar", src)
+        bundle = (Path(STATIC) / "app.js").read_text(encoding="utf-8", errors="replace")
+        # A real brand path from github's mark survives minification.
+        self.assertIn("M12 .297c-6.63", bundle)
+
+
 if __name__ == "__main__":
     unittest.main()

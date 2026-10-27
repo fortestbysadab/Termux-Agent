@@ -8,13 +8,17 @@ import { Icon } from './ui.jsx';
  * ── Border Beam lives here and nowhere else. ──
  * It wraps only this element: a slow, low-strength "ocean" beam at rest that
  * brightens and speeds up while the agent is working. Everything inside keeps
- * its native behaviour (focus, caret, IME, autosize, Enter to send).
+ * its native behaviour (focus, caret, IME, autosize, Enter to send, paste).
  */
 export default function Composer({
   value,
   onChange,
   onSend,
+  onAttach,
+  onPasteFiles,
   busy,
+  uploading,
+  attachmentCount = 0,
   theme,
   reduced,
   placeholder = 'Ask the agent to build, research, or run something…',
@@ -29,7 +33,12 @@ export default function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
-  const canSend = value.trim().length > 0 && !busy;
+  const canSend = (value.trim().length > 0 || attachmentCount > 0) && !busy && !uploading;
+
+  const submit = () => {
+    if (!canSend) return;
+    onSend(value.trim());
+  };
 
   // The beam needs a little more push on a white surface to read as a glow.
   const light = theme === 'light';
@@ -42,11 +51,6 @@ export default function Composer({
         glow: 0.95,
         duration: 5.2,
       };
-
-  const submit = () => {
-    if (!canSend) return;
-    onSend(value.trim());
-  };
 
   return (
     <div className="composer-wrap">
@@ -76,6 +80,13 @@ export default function Composer({
             spellCheck="false"
             autoComplete="off"
             onChange={(e) => onChange(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.files || []);
+              if (files.length) {
+                e.preventDefault();
+                onPasteFiles?.(files);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -84,25 +95,42 @@ export default function Composer({
             }}
           />
           <div className="composer-bar">
+            <button
+              type="button"
+              className="attach-btn"
+              onClick={onAttach}
+              disabled={busy}
+              title="Attach a file to this session"
+              aria-label="Attach a file"
+            >
+              <Icon.Paperclip size={16} />
+            </button>
+
             <span className="composer-hint">
+              {attachmentCount > 0 ? (
+                <>
+                  <b>{attachmentCount}</b> file{attachmentCount === 1 ? '' : 's'} attached ·{' '}
+                </>
+              ) : null}
               <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline
             </span>
+
             <button
               type="button"
               className="send-btn"
               onClick={submit}
               disabled={!canSend}
-              aria-label={busy ? 'Agent is working' : 'Send message'}
-              title={busy ? 'Agent is working…' : 'Send (Enter)'}
+              aria-label={busy ? 'Agent is working' : uploading ? 'Uploading file' : 'Send message'}
+              title={busy ? 'Agent is working…' : uploading ? 'Uploading…' : 'Send (Enter)'}
             >
-              <Icon.Send size={18} />
+              {uploading ? <span className="spinner" /> : <Icon.Send size={18} />}
             </button>
           </div>
         </div>
       </BorderBeam>
       <p className="composer-foot">
-        The agent can run shell commands inside this session&apos;s sandbox. Files it creates land in
-        the workspace.
+        Files you attach are saved to <code>uploads/</code> inside this session&rsquo;s sandbox — the
+        agent can read them, and they leave with the session.
       </p>
     </div>
   );
