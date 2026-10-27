@@ -586,5 +586,107 @@ class TestTermuxAgent(unittest.TestCase):
                 "http://127.0.0.1:8080/api/skills/api-probe", method="DELETE"), timeout=3).read()
 
 
+    # ------------------------------------------------------------------- pdf
+    def test_pdfkit_writes_a_renderable_page_tree(self):
+        """The page tree must point at /Page objects, not at a content stream.
+
+        This is the bug that produced a 3 kB file with `Page size: 0 x 0` that
+        every viewer rendered blank.
+        """
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path("skills/pdf-report").resolve()))
+        from pdfkit import Canvas, verify
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "probe.pdf"
+            doc = Canvas(title="Probe", footer="unit test")
+            y = doc.title("Probe report")
+            y = doc.paragraph("Body copy that has to wrap on its own. " * 4, y=y, size=10)
+            y = doc.table(
+                x=doc.left, y=y - 10, width=doc.content_width,
+                headers=["Country", "Value"],
+                rows=[("Brazil", "66.4"), ("Vietnam", "27.5")],
+                col_align=["left", "right"],
+            )
+            doc.bar_chart(x=doc.left, y=y - 20, width=doc.content_width, height=180,
+                          data=[("Brazil", 66.4), ("Vietnam", 27.5)])
+            doc.save(target)
+
+            info = verify(target)
+            self.assertTrue(info["header_ok"])
+            self.assertTrue(info["eof_ok"])
+            self.assertEqual(info["pages"], 1)
+            self.assertTrue(info["page_tree_ok"], "page tree is broken — viewers will render blank")
+            self.assertTrue(info["has_chart"], f"no chart operators: {info}")
+
+    def test_pdfkit_bar_chart_is_vector(self):
+        """Bars are rectangle ops in the content stream, not text or a bitmap."""
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path("skills/pdf-report").resolve()))
+        from pdfkit import Canvas, verify
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with_chart = Path(tmp) / "chart.pdf"
+            doc = Canvas()
+            doc.bar_chart(x=56, y=700, width=480, height=220,
+                          data=[("A", 10), ("B", 20), ("C", 15), ("D", 5), ("E", 12)])
+            doc.save(with_chart)
+            plain = Path(tmp) / "plain.pdf"
+            doc2 = Canvas()
+            doc2.paragraph("just text, no chart at all", y=700)
+            doc2.save(plain)
+
+            a, b = verify(with_chart), verify(plain)
+            self.assertGreater(a["rect_ops"], b["rect_ops"])
+            self.assertGreaterEqual(a["rect_ops"] - b["rect_ops"], 5)
+            self.assertGreater(a["stroke_ops"], b["stroke_ops"])
+            self.assertEqual(a["image_objects"], 0)
+            self.assertFalse(b["has_chart"])
+
+    def test_pdf_text_never_truncates_labels(self):
+        """Country names must survive intact — 'Bra', 'Vie', 'Col' were a real bug."""
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path("skills/pdf-report").resolve()))
+        from pdfkit import Canvas, text_width, wrap_text
+
+        # metrics-based wrapping stays inside the column
+        line = "Brazil 66.4"
+        self.assertGreater(text_width(line, 10), 0)
+        self.assertTrue(all(text_width(l, 10) <= 200 for l in wrap_text("alpha beta gamma " * 12, 200, 10)))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "labels.pdf"
+            import zlib, re
+            doc = Canvas()
+            doc.table(x=56, y=700, width=480, headers=["Country", "Bags"],
+                      rows=[("Brazil", "66.4"), ("Vietnam", "27.5"), ("Colombia", "11.4"),
+                            ("Indonesia", "10.0"), ("Ethiopia", "8.4")])
+            doc.save(target)
+            raw = target.read_bytes()
+            stream = re.findall(rb"stream\r?\n(.*?)\r?\nendstream", raw, re.S)[0]
+            body = zlib.decompress(stream)
+            for name in (b"Brazil", b"Vietnam", b"Colombia", b"Indonesia", b"Ethiopia"):
+                self.assertIn(name, body)
+
+    def test_pdf_report_skill_points_at_the_toolkit(self):
+        """The skill must tell the agent to use pdfkit, not to hand-build objects."""
+        from skills import SkillRegistry
+
+        skill = SkillRegistry().get("pdf-report")
+        self.assertIsNone(skill.error)
+        self.assertIn("pdfkit", skill.body)
+        self.assertIn("verify", skill.body)
+        self.assertNotIn("Wrap text yourself at ~92 characters", skill.body)
+
+
 if __name__ == "__main__":
     unittest.main()

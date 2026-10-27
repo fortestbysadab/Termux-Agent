@@ -1,7 +1,7 @@
 ---
 name: pdf-report
 title: PDF document
-description: Write a multi-page PDF by hand — no reportlab, no LaTeX.
+description: Real PDFs with text, tables and vector charts — no reportlab, no LaTeX.
 when_to_use: The user wants a report, document, invoice or printable page as PDF.
 uses: []
 tools: [run_terminal_command]
@@ -12,50 +12,68 @@ files: [pdf, md, txt]
 
 # PDF document
 
-A PDF is a text file with an object table. You can emit one with `print()`.
-`reportlab`, `weasyprint` and `wkhtmltopdf` are not available (or take forever to
-build), so generate the PDF directly.
-
-## Structure
+`reportlab`, `weasyprint`, `matplotlib` and `wkhtmltopdf` are not available here
+(and take forever to build on a phone). Do **not** hand-assemble PDF objects —
+that is how you get an unrenderable file. Use the bundled toolkit:
 
 ```python
-objects = []
-def add(body: bytes) -> int:
-    objects.append(body)
-    return len(objects)          # object numbers are 1-based
-
-# 1 Catalogue, 2 Pages, 3 Page, 4 Contents (stream), 5 Font
+import sys
+sys.path.insert(0, "<this skill's directory>")   # .../skills/pdf-report
+from pdfkit import Canvas, verify
 ```
 
-The page's `/Contents` stream is a mini drawing language:
+`pdfkit.py` writes a correct object graph (page objects first, then `/Pages`
+back-patched with their real ids), wraps text with real Helvetica metrics, and
+draws vector charts. Available calls:
 
-| Command | Meaning |
+| Call | What it does |
 | --- | --- |
-| `BT /F1 18 Tf 56 760 Td (Title) Tj ET` | text at a position |
-| `0.1 0.1 0.1 rg` | fill colour |
-| `56 740 m 540 740 l S` | line from → to, stroke |
-| `q ... Q` | save/restore graphics state |
+| `Canvas(title=, footer=)` | A4 page, 56 pt margins, footer + page numbers |
+| `doc.title(text)` | 20 pt title plus a rule; returns the y below it |
+| `doc.heading(text, y=)` | section heading |
+| `doc.paragraph(text, y=, width=, size=, leading=)` | wrapped body copy; returns next y |
+| `doc.table(x, y, width, headers, rows, col_align=[], bold_last_row=)` | grid table with zebra rows |
+| `doc.bar_chart(x, y, width, height, data, unit=)` | **vector** bars: axes, gridlines, value labels, category labels |
+| `doc.text / rect / line / new_page` | primitives |
+| `doc.save(path)` | write the file |
 
-## Layout rules
+Coordinates are PostScript points with the origin **bottom-left**, so `y`
+decreases as you move down the page. Chain the return values:
+`y = doc.title(...)` → `y = doc.paragraph(..., y=y)` → `y = doc.table(..., y=y-16)`.
 
-- Page size `595 842` (A4 points). Margins 56. Body text `11 Tf`, leading 16.
-- Wrap text yourself at ~92 characters; **escape `(`, `)` and `\`** in strings.
-- One page ≈ 44 lines of body text — start a new page object after that rather
-  than overflowing the media box.
-- Keep a real `/Font` (`/Helvetica`) and set `/Length` on the content stream to
-  its exact byte length, or viewers show a blank page.
+## Rules that keep the output honest
 
-## Verify
+- **The chart must be drawn**, not described: pass the same numbers to
+  `bar_chart()` as to `table()`. That is a vector chart — rectangles in the
+  content stream, no bitmap, no ASCII art, no "[chart here]".
+- **Never truncate labels yourself.** `pdfkit` measures the font and ellipsizes
+  only when a label cannot fit. Half-names like "Bra", "Vie", "Col" are a bug.
+- **Never fake a chart by printing numbers in a column** and calling it a chart.
+- If a required library is genuinely missing, say which one and stop — do not
+  ship a PDF that claims to contain something it does not.
+- One page holds roughly 700 pt of content; call `doc.new_page()` before
+  overflowing the media box.
 
-```bash
-python3 - <<'EOF'
-data = open("report.pdf","rb").read()
-assert data.startswith(b"%PDF-1."), "bad header"
-assert data.rstrip().endswith(b"%%EOF"), "truncated"
-print(len(data), "bytes,", data.count(b"/Type /Page "), "pages")
-EOF
+## Verify before you answer
+
+```python
+from pdfkit import verify
+print(verify("report.pdf"))
 ```
 
-Check the byte count is plausible (a one-page text PDF is 2–4 kB). Keep the file
-in the workspace root with a descriptive name, remove the generator script, then
-tell the user the page count and what is on each page.
+Check `header_ok`, `eof_ok`, `page_tree_ok` (must be `true` — a `false` here
+means viewers render a blank page), `pages`, and `has_chart` (`rect_ops >= 5`
+and `stroke_ops >= 3`). If poppler is installed, also run
+`pdfinfo report.pdf` (Page size must not be `0 x 0`) and
+`pdftoppm -r 100 -png report.pdf /tmp/page` to look at it yourself.
+
+**Byte size is a weak proof.** A whole vector chart costs ~700 bytes, so a
+correct 1-page report is only 2–3 kB. Quote the operator counts
+(`rect_ops`, `stroke_ops`, `image_objects: 0`) and the render, not the size.
+
+## When you are done
+
+Report the absolute path, the byte size, that the tool was `pdfkit` (stdlib),
+the first 8 bytes (`%PDF-1.4`), the `verify()` output, and one line on what the
+chart shows. Remove the generator script only if the user asked for the PDF
+alone; otherwise leave both.
