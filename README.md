@@ -59,7 +59,17 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - **Anyone can write a skill**: the *New skill* button (triggers, file types, dependencies, instructions), a `SKILL.md` dropped into `skills/`, or plain English in chat — ask for "save that as a skill" and the agent writes it with the `create_skill` tool. User and agent skills are badged *yours* / *by the agent* and can be edited or deleted from the UI; the six bundled skills can only be disabled.
    - Six skills ship in the box: `data-wrangler`, `svg-chart`, `xlsx-report`, `pdf-report`, `workspace-audit`, `report-bundle`. Enable/disable any of them from the Skills screen — the catalogue and the tool list update on the next turn, and run counters are kept in SQLite.
 
-11. **Console built on [Libraries.dev](https://libraries.dev)**:
+11. **Asks before it guesses — structured questions with options**:
+   - When a request is genuinely ambiguous the agent calls `ask_user` and the turn ends with an `input_required` payload: up to three questions, each with 2–5 labelled options (plus "type your own").
+   - The console renders them as a picker above the composer. Answering **re-issues the same request** with `input_responses` + a single-use `request_state` — the MCP "input required" round-trip pattern, so nothing is lost or restarted. The questions are stored server-side, and the transcript never contains a dangling tool call.
+   - The system prompt tells it when *not* to ask: if the request is clear, do the work.
+
+12. **Checks what is installed before using it**:
+   - `environment.py` probes the machine (Python version, third-party libraries, CLI tools) in ~80 ms and caches for a minute.
+   - A compact `## ENVIRONMENT (probed, not assumed)` block goes into every system prompt, and the `check_environment` tool answers precise questions ("is reportlab here?"). The answer is shown in the transcript as an **ENV** card.
+   - The rule is explicit: never `pip install` unless asked; if a tool is missing, say which one and use the stdlib path. The **Capability check** panel on the Skills screen shows the same data.
+
+13. **Console built on [Libraries.dev](https://libraries.dev)**:
    - **Border Beam** (`border-beam`) — a single, subtle animated glow wrapped around **the chat composer only**, calm at rest, brighter and faster while the agent works.
    - **Thinking Orbs** (`thinking-orbs`) — every spinner replaced by an orb whose state is driven by the real SSE activity: `searching` (reasoning), `working` (running a command), `connecting` (calling a tool), `solving` (reading results), with crossfades between phases.
    - **Bot Avatars** (`bot-avatars`) — the planner, the shell and the MCP bridge each get their own animated identity (plush / plastic bodies, distinct colours) that switches as control passes between them. Connectors are shown as their own real brand logos, not as bots.
@@ -98,6 +108,7 @@ termux-agent/
 ├── skills.py                # SKILL.md discovery, dependency loading, router, authoring
 ├── uploads.py               # Multipart parsing, filename sanitising, uploads/ storage
 ├── vision.py                # model-capability detection + inline image content parts
+├── environment.py           # package/CLI probe + prompt block + check_environment
 ├── skills/
 │   ├── data-wrangler/SKILL.md
 │   ├── svg-chart/SKILL.md

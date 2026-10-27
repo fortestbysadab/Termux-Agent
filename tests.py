@@ -688,5 +688,134 @@ class TestTermuxAgent(unittest.TestCase):
         self.assertNotIn("Wrap text yourself at ~92 characters", skill.body)
 
 
+    # ---------------------------------------------------------- elicitation
+    def test_agent_pauses_and_asks_with_options(self):
+        """ask_user ends the turn with input_required and stores the questions."""
+        from connectors.manager import ConnectorManager
+        from agent.loop import AgentRunner
+        from db import create_session, delete_session, get_messages, get_pending_input
+
+        class Planner:
+            def complete(self, messages, tools=None):
+                return {
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_q", "name": "ask_user",
+                        "arguments": {
+                            "intro": "Need two details.",
+                            "questions": [
+                                {"id": "format", "question": "Which format?",
+                                 "options": [{"id": "pdf", "label": "PDF"},
+                                             {"id": "xlsx", "label": "Excel"}]},
+                                {"id": "len", "question": "How long?",
+                                 "options": [{"label": "1 page"}, {"label": "5 pages"}]},
+                            ],
+                        },
+                    }],
+                }
+
+        session = create_session("pause test")
+        sid = session["id"]
+        events = []
+        try:
+            runner = AgentRunner(ConnectorManager(), planner=Planner())
+            out = runner.run_turn(sid, "make me a report", callback=lambda t, d: events.append(t))
+            pending = out["input_required"]
+            self.assertIsNotNone(pending)
+            self.assertEqual([q["id"] for q in pending["questions"]], ["format", "len"])
+            self.assertEqual(len(pending["questions"][0]["options"]), 2)
+            self.assertTrue(pending["questions"][0]["allow_custom"])
+            self.assertIn("input_required", events)
+            # transcript stays valid: a question ends the turn, no dangling tool call
+            self.assertTrue(all(m["role"] != "tool" for m in get_messages(sid)))
+            self.assertIsNotNone(get_pending_input(pending["request_state"]))
+        finally:
+            delete_session(sid)
+
+    def test_answers_resume_the_same_request(self):
+        from connectors.manager import ConnectorManager
+        from agent.loop import AgentRunner
+        from db import (
+            create_session, delete_session, get_pending_input, save_pending_input,
+        )
+
+        class Planner:
+            def __init__(self):
+                self.seen = None
+
+            def complete(self, messages, tools=None):
+                self.seen = messages
+                return {"content": "Built it.", "tool_calls": []}
+
+        session = create_session("resume test")
+        sid = session["id"]
+        try:
+            save_pending_input(
+                "tok-abc", sid, "make me a report",
+                [{"id": "format", "question": "Which format?",
+                  "options": [{"id": "pdf", "label": "PDF"}, {"id": "x", "label": "X"}]}],
+            )
+            planner = Planner()
+            runner = AgentRunner(ConnectorManager(), planner=planner)
+            out = runner.run_turn(
+                sid, "make me a report",
+                input_responses={"format": "PDF"}, request_state="tok-abc",
+            )
+            self.assertEqual(out["message"]["content"], "Built it.")
+            self.assertIsNone(get_pending_input("tok-abc"), "token should be single-use")
+
+            user_turns = [m for m in planner.seen if m["role"] == "user"]
+            joined = " ".join(str(m["content"]) for m in user_turns)
+            self.assertIn("PDF", joined)
+            self.assertIn("do not ask again", joined.lower())
+        finally:
+            delete_session(sid)
+
+    def test_question_payload_is_sanitised(self):
+        """A single-option or empty question is dropped rather than rendered broken."""
+        from agent.loop import _normalise_questions
+
+        normalised = _normalise_questions([
+            {"question": "Real one?", "options": [{"label": "Yes"}, {"label": "No"}]},
+            {"question": "Only one option?", "options": [{"label": "Yes"}]},
+            {"question": "", "options": [{"label": "a"}, {"label": "b"}]},
+        ])
+        self.assertEqual(len(normalised), 1)
+        self.assertEqual(len(normalised[0]["options"]), 2)
+        self.assertEqual(normalised[0]["id"], "q1")
+
+    # --------------------------------------------------------- environment
+    def test_environment_probe_reports_reality(self):
+        import environment
+
+        data = environment.probe(refresh=True)
+        self.assertTrue(data["python"].startswith("3."))
+        self.assertIn("cli", data)
+        self.assertIn("packages", data)
+        # the stdlib is always there, and a library that is genuinely absent is flagged
+        self.assertTrue(environment.check(["sqlite3"])["sqlite3"]["available"])
+        self.assertIn("reportlab", data["missing_packages"])
+
+    def test_environment_block_is_in_the_prompt(self):
+        from connectors.manager import ConnectorManager
+        from agent.loop import AgentRunner
+
+        prompt = AgentRunner(ConnectorManager())._system_prompt()
+        self.assertIn("## ENVIRONMENT (probed, not assumed)", prompt)
+        self.assertIn("check_environment", prompt)
+        self.assertIn("CLARIFY WHEN IT MATTERS", prompt)
+        self.assertNotIn("{environment}", prompt)
+
+    def test_check_environment_tool_answers_precisely(self):
+        import environment
+
+        report = environment.check(["pdftoppm", "reportlab", "definitely-not-a-package"])
+        self.assertTrue(report["pdftoppm"]["available"])
+        self.assertEqual(report["pdftoppm"]["kind"], "binary")
+        self.assertFalse(report["reportlab"]["available"])
+        self.assertEqual(report["reportlab"]["kind"], "module")
+        self.assertEqual(report["definitely-not-a-package"]["kind"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,7 @@ export const addCustomMcp = (payload) =>
 export const removeConnector = (id) => api(`/api/connectors/${id}`, { method: 'DELETE' });
 
 export const getConfig = () => api('/api/config');
+export const getEnvironment = () => api('/api/environment');
 export const getSkills = () => api('/api/skills').then((d) => d.skills || []);
 export const toggleSkill = (name, enabled) =>
   api(`/api/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
@@ -87,11 +88,26 @@ export const zipUrl = (sessionId) => `/api/workspace/${sessionId}/zip`;
  * Note the server answers a POST with `text/event-stream`, so we can't use
  * EventSource — we read the body stream and parse the frames ourselves.
  */
-export async function streamChat({ sessionId, text, attachments = [], onEvent, signal }) {
+export async function streamChat({
+  sessionId,
+  text,
+  attachments = [],
+  inputResponses = null,
+  requestState = null,
+  onEvent,
+  signal,
+}) {
   const resp = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, text, stream: true, attachments }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      text,
+      stream: true,
+      attachments,
+      input_responses: inputResponses,
+      request_state: requestState,
+    }),
     signal,
   });
 
@@ -103,6 +119,22 @@ export async function streamChat({ sessionId, text, attachments = [], onEvent, s
   const decoder = new TextDecoder();
   let buffer = '';
 
+  const handleBlock = (block) => {
+    if (!block.trim()) return;
+    let type = 'message';
+    let data = '';
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event: ')) type = line.slice(7).trim();
+      else if (line.startsWith('data: ')) data += line.slice(6);
+    }
+    if (!data) return;
+    try {
+      onEvent(type, JSON.parse(data));
+    } catch {
+      /* ignore a malformed frame */
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -112,21 +144,14 @@ export async function streamChat({ sessionId, text, attachments = [], onEvent, s
     buffer = blocks.pop() ?? '';
 
     for (const block of blocks) {
-      if (!block.trim()) continue;
-      let type = 'message';
-      let data = '';
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event: ')) type = line.slice(7).trim();
-        else if (line.startsWith('data: ')) data += line.slice(6);
-      }
-      if (!data) continue;
-      try {
-        onEvent(type, JSON.parse(data));
-      } catch {
-        /* ignore malformed frame */
-      }
+      handleBlock(block);
     }
   }
+
+  // A stream that ends without a trailing blank line would otherwise lose its
+  // last frame — which is usually `done`. Flush whatever is left.
+  handleBlock(buffer);
+
 }
 
 /* ---------------------------------------------------------------- skills */

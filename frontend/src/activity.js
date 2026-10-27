@@ -11,6 +11,7 @@ export const PHASES = {
   executing: { id: 'executing', orb: 'working', label: 'Running command' },
   connecting: { id: 'connecting', orb: 'connecting', label: 'Calling tool' },
   solving: { id: 'solving', orb: 'solving', label: 'Reading results' },
+  waiting: { id: 'waiting', orb: 'listening', label: 'Needs your input' },
   composing: { id: 'composing', orb: 'composing', label: 'Composing response' },
   loading: { id: 'loading', orb: 'weaving', label: 'Loading skill' },
 };

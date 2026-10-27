@@ -26,6 +26,7 @@ from db import (
     delete_connector,
 )
 from connectors.manager import ConnectorManager
+import environment
 import vision as vision_mod
 from config import LLM_MODEL, MAX_UPLOAD_BYTES, SKILL_ROUTER
 from skills import (
@@ -198,6 +199,19 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
             self._json(200, {"skills": skills})
             return
 
+        elif path == "/api/environment":
+            data = environment.probe()
+            self._json(200, {
+                "python": data["python"],
+                "platform": data["platform"],
+                "third_party_packages": data["third_party_packages"],
+                "missing_packages": data["missing_packages"],
+                "available_cli": data["available_cli"],
+                "prompt": environment.prompt_block(),
+                "probed_at": data["at"],
+            })
+            return
+
         elif path == "/api/config":
             # What the console needs to know about the agent's capabilities.
             self._json(200, {
@@ -346,7 +360,10 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         elif path == "/api/chat":
             session_id = body.get("session_id")
             text = (body.get("text") or "").strip()
-            if not session_id or not text:
+            input_responses = body.get("input_responses") or None
+            request_state = body.get("request_state") or None
+            # A round-trip resume carries answers instead of (or as well as) text.
+            if not session_id or (not text and not input_responses):
                 self._json(400, {"error": "session_id and text are required"})
                 return
 
@@ -370,7 +387,12 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
 
                 try:
                     self.runner.run_turn(
-                        session_id, text, callback=sse_callback, attachments=attachments
+                        session_id,
+                        text,
+                        callback=sse_callback,
+                        attachments=attachments,
+                        input_responses=input_responses,
+                        request_state=request_state,
                     )
                 except Exception as exc:
                     sse_callback("error", {
@@ -383,7 +405,13 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
                 return
             else:
                 try:
-                    outcome = self.runner.run_turn(session_id, text, attachments=attachments)
+                    outcome = self.runner.run_turn(
+                        session_id,
+                        text,
+                        attachments=attachments,
+                        input_responses=input_responses,
+                        request_state=request_state,
+                    )
                     self._json(200, outcome)
                 except Exception as e:
                     self._json(500, {"error": f"Agent error: {str(e)}"})

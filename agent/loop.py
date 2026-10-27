@@ -11,6 +11,9 @@ from db import (
     get_skill_states,
     record_artifact,
     record_skill_run,
+    save_pending_input,
+    delete_pending_input,
+    get_pending_input,
     update_session_title,
 )
 from sandbox.runner import SessionSandbox
@@ -18,6 +21,8 @@ from sandbox.tracker import snapshot_workspace, diff_workspace
 from connectors.manager import ConnectorManager
 from agent.planner import LLMPlanner
 from config import SKILL_ROUTER, LLM_MODEL
+import environment
+import uuid
 from skills import SkillRouter
 import vision
 from skills import SkillRegistry
@@ -53,6 +58,11 @@ WORKFLOW RULES:
   4. `list_skills` shows everything available, including skills missing from this catalogue.
 - UPLOADED FILES: files the user attached live in the `uploads/` directory of the workspace. Never modify or delete anything in `uploads/`.
 - {vision}
+- CLARIFY WHEN IT MATTERS: if the request is genuinely ambiguous — no topic, no format, no
+  length, no data source, or two readings that would produce very different files — call
+  `ask_user` with 2-4 concrete options instead of guessing. One short round beats a wrong
+  deliverable. Never ask about things you can decide yourself, and never ask twice.
+- {environment}
 - SKILL ROUTER: a router matches the request (and any attached file types) to installed skills and loads them for you; skills listed under AUTO-LOADED SKILLS are already in context. Use `use_skill` for anything the router did not catch, `list_skills` to browse, and `create_skill` when the user wants their own repeatable procedure saved.
 - If the task is purely conversational or an inquiry without file requests, answer directly in chat.
 - After running terminal commands, explain the results clearly. Be concise, direct, and helpful.
@@ -178,6 +188,41 @@ USE_SKILL_TOOL_SCHEMA = {
 }
 
 
+def _normalise_questions(raw: Any) -> list[dict[str, Any]]:
+    """Coerce the model's question payload into something the UI can render."""
+    questions: list[dict[str, Any]] = []
+    for index, item in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("question", "") or "").strip()
+        if not text:
+            continue
+        qid = str(item.get("id") or f"q{index + 1}").strip()[:32]
+        options = []
+        for opt_index, opt in enumerate(item.get("options") or []):
+            if isinstance(opt, dict):
+                label = str(opt.get("label", "") or "").strip()
+                description = str(opt.get("description", "") or "").strip()
+                opt_id = str(opt.get("id") or label).strip()[:48]
+            else:
+                label = str(opt).strip()
+                description = ""
+                opt_id = label[:48]
+            if label:
+                options.append({"id": opt_id or f"opt{opt_index}", "label": label, "description": description})
+        if len(options) < 2:
+            continue
+        questions.append({
+            "id": qid,
+            "question": text,
+            "options": options[:5],
+            "allow_custom": bool(item.get("allow_custom", True)),
+        })
+        if len(questions) == 3:
+            break
+    return questions
+
+
 def _attachment_note(attachments: Optional[list[dict[str, Any]]]) -> str:
     """Turn the upload manifest into a short note appended to the user's message."""
     if not attachments:
@@ -193,6 +238,85 @@ def _attachment_note(attachments: Optional[list[dict[str, Any]]]) -> str:
         f"\n\n[The user attached these files to the workspace]\n{listing}\n"
         "Read them from the uploads/ directory before answering."
     )
+
+
+ASK_USER_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "ask_user",
+        "description": (
+            "Pause and ask the user a focused question with concrete options before doing the "
+            "work. Use it when the request is genuinely ambiguous (missing topic, format, length, "
+            "source of data, audience) and a wrong guess would waste the whole turn. This is the "
+            "standard 'input required' round-trip: the turn ends, the user picks, and their answer "
+            "re-issues the request. Do not use it for questions you can answer yourself, and do "
+            "not ask more than 3 questions at once."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "intro": {
+                    "type": "string",
+                    "description": "One short sentence explaining why you need this.",
+                },
+                "questions": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "short key, e.g. 'format'"},
+                            "question": {"type": "string"},
+                            "options": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 5,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": "string"},
+                                        "label": {"type": "string", "description": "Short button text"},
+                                        "description": {"type": "string", "description": "Optional one-liner"},
+                                    },
+                                    "required": ["label"],
+                                },
+                            },
+                            "allow_custom": {
+                                "type": "boolean",
+                                "description": "Let the user type their own answer too (default true)",
+                            },
+                        },
+                        "required": ["question", "options"],
+                    },
+                },
+            },
+            "required": ["questions"],
+        },
+    },
+}
+
+CHECK_ENVIRONMENT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "check_environment",
+        "description": (
+            "Report whether specific Python packages or command-line tools are actually installed "
+            "in this sandbox. Call this before importing a library or shelling out to a tool you "
+            "are not sure about. Never assume; never pip install without the user asking."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Package or command names, e.g. ['reportlab', 'pandoc', 'openpyxl']",
+                },
+            },
+            "required": ["names"],
+        },
+    },
+}
 
 
 CREATE_SKILL_TOOL_SCHEMA = {
@@ -320,6 +444,7 @@ class AgentRunner:
         catalogue = self.skills.catalog(self._skill_states()) or "- (no skills installed)"
         prompt = SYSTEM_PROMPT.replace("{catalogue}", catalogue)
         prompt = prompt.replace("{vision}", vision.capability_note(LLM_MODEL))
+        prompt = prompt.replace("{environment}", environment.prompt_block())
         return prompt + extra
 
     def run_turn(
@@ -328,9 +453,34 @@ class AgentRunner:
         user_text: str,
         callback: Optional[Callable[[str, dict], None]] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        input_responses: Optional[dict[str, str]] = None,
+        request_state: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Execute one complete conversational agent turn with optional real-time event callbacks."""
+        """Execute one conversational turn.
+
+        If the model calls ``ask_user`` the turn ends with an ``input_required``
+        payload (token + questions). The client then re-issues the same request
+        with ``request_state`` and ``input_responses`` — the MCP round-trip
+        pattern — and the turn continues with the answers in context.
+        """
         sandbox = SessionSandbox(session_id)
+
+        # 0. Resuming after the user answered a question?
+        answered_block = ""
+        if request_state and input_responses:
+            pending = get_pending_input(request_state)
+            if pending and pending["session_id"] == session_id:
+                lines = []
+                for question in pending["questions"]:
+                    answer = input_responses.get(question.get("id") or question.get("question"), "")
+                    if answer:
+                        lines.append(f"- {question.get('question')} → {answer}")
+                if lines:
+                    answered_block = (
+                        "The user answered your questions:\n" + "\n".join(lines)
+                        + "\n\nNow do the work; do not ask again."
+                    )
+                delete_pending_input(request_state)
 
         # 1. Snapshot workspace before executing
         before_snap = snapshot_workspace(sandbox.workspace_dir)
@@ -338,13 +488,16 @@ class AgentRunner:
         # 2. Retrieve history and active tools
         history = get_messages(session_id)
         active_tools, routing = self.connectors.get_active_tools()
-        all_tools = [TERMINAL_TOOL_SCHEMA] + active_tools
+        all_tools = [TERMINAL_TOOL_SCHEMA, ASK_USER_TOOL_SCHEMA, CHECK_ENVIRONMENT_TOOL_SCHEMA] + active_tools
         if self.skills.enabled(self._skill_states()):
             all_tools = all_tools + [
                 LIST_SKILLS_TOOL_SCHEMA,
                 USE_SKILL_TOOL_SCHEMA,
                 CREATE_SKILL_TOOL_SCHEMA,
             ]
+
+        if answered_block:
+            user_text = (user_text + "\n\n" if user_text.strip() else "") + answered_block
 
         # 3. Route first: which skills does this request obviously need?
         route_prompt, route_events, route_runs = self._auto_route(user_text, attachments)
@@ -393,6 +546,7 @@ class AgentRunner:
         collected_tool_runs = list(route_runs)
         final_text = ""
         error_info = None
+        paused: Optional[dict[str, Any]] = None
 
         for turn in range(max_turns):
             if callback:
@@ -461,6 +615,75 @@ class AgentRunner:
                     # Notify UI of command completion
                     if callback:
                         callback("command_done", cmd_info)
+                elif t_name == "ask_user":
+                    questions = _normalise_questions(t_args.get("questions") or [])
+                    if not questions:
+                        tool_content = "No usable questions were supplied; continue without asking."
+                        collected_tool_runs.append({
+                            "tool": "ask_user", "command": "ask_user", "stdout": tool_content,
+                            "stderr": "", "exit_code": 1, "duration_ms": 0, "ok": False,
+                            "kind": "question",
+                        })
+                        messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_content})
+                        continue
+
+                    token = uuid.uuid4().hex[:16]
+                    intro = str(t_args.get("intro", "") or "").strip()
+                    save_pending_input(token, session_id, user_text, questions)
+                    pending_payload = {
+                        "request_state": token,
+                        "intro": intro,
+                        "questions": questions,
+                    }
+                    paused_info = {
+                        "tool": "ask_user",
+                        "command": "ask_user " + ", ".join(q["id"] for q in questions),
+                        "stdout": "\n".join(
+                            [intro] if intro else []
+                        ) + "\n".join(
+                            f"- {q['question']} ({' / '.join(o['label'] for o in q['options'])})"
+                            for q in questions
+                        ),
+                        "stderr": "", "exit_code": 0, "duration_ms": 0, "ok": True,
+                        "kind": "question",
+                    }
+                    collected_tool_runs.append(paused_info)
+                    if callback:
+                        callback("input_required", pending_payload)
+                        callback("command_done", paused_info)
+
+                    final_text = (intro + "\n\n" if intro else "") + "\n".join(
+                        f"**{q['question']}**" for q in questions
+                    )
+                    paused = pending_payload
+                    # The turn ends here: the client will re-issue it with answers.
+                    break
+
+                elif t_name == "check_environment":
+                    names = t_args.get("names") or []
+                    report = environment.check(names) if names else {
+                        "summary": {
+                            "python": environment.probe()["python"],
+                            "platform": environment.probe()["platform"],
+                            "third_party_packages": environment.probe()["third_party_packages"],
+                            "available_cli": environment.probe()["available_cli"],
+                        }
+                    }
+                    tool_content = json.dumps(report, indent=2)
+                    env_info = {
+                        "tool": "check_environment",
+                        "command": "check_environment " + ", ".join(str(n) for n in names),
+                        "stdout": tool_content[:4000],
+                        "stderr": "",
+                        "exit_code": 0,
+                        "duration_ms": 0,
+                        "ok": True,
+                        "kind": "environment",
+                    }
+                    collected_tool_runs.append(env_info)
+                    if callback:
+                        callback("command_done", env_info)
+
                 elif t_name == "create_skill":
                     from skills import SkillError, create_skill
 
@@ -603,6 +826,9 @@ class AgentRunner:
                     "content": tool_content[:8000]
                 })
 
+            if paused:
+                break
+
         # 5. Snapshot workspace after turn to detect created or modified files
         after_snap = snapshot_workspace(sandbox.workspace_dir)
         changes = diff_workspace(before_snap, after_snap)
@@ -657,6 +883,7 @@ class AgentRunner:
             "files_generated": chat_artifacts_meta,
             "workspace": str(sandbox.workspace_dir),
             "error": error_info,
+            "input_required": paused,
         }
 
         if callback:

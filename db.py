@@ -66,6 +66,17 @@ def init_db() -> None:
             last_used REAL
         );
 
+        -- Round-trip state: the agent paused to ask the user something and the
+        -- client will re-issue the request with the answers (MCP "input
+        -- required" style). One row per pending question set.
+        CREATE TABLE IF NOT EXISTS pending_inputs (
+            token TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            user_text TEXT NOT NULL,
+            questions TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
         """)
@@ -323,3 +334,43 @@ def record_skill_run(name: str) -> None:
             """,
             (name, time.time()),
         )
+
+
+# --- Pending questions (elicitation round-trips) ---
+
+def save_pending_input(token: str, session_id: str, user_text: str, questions: list) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_inputs (token, session_id, user_text, questions, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token, session_id, user_text, json.dumps(questions, ensure_ascii=False), time.time()),
+        )
+
+
+def get_pending_input(token: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT token, session_id, user_text, questions, created_at FROM pending_inputs WHERE token = ?",
+            (token,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "token": row["token"],
+        "session_id": row["session_id"],
+        "user_text": row["user_text"],
+        "questions": json.loads(row["questions"]),
+        "created_at": row["created_at"],
+    }
+
+
+def delete_pending_input(token: str) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM pending_inputs WHERE token = ?", (token,))
+
+
+def prune_pending_inputs(max_age: float = 3600.0) -> int:
+    cutoff = time.time() - max_age
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM pending_inputs WHERE created_at < ?", (cutoff,))
+        return cur.rowcount

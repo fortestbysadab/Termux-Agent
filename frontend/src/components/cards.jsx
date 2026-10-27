@@ -14,14 +14,18 @@ export function ToolRunCard({ run, theme, reduced, index = 0 }) {
   const r = run.detail ? { ...run.detail } : run;
   const isSkill =
     r.kind === 'skill' || String(r.tool || '').startsWith('use_skill') || r.tool === 'create_skill';
+  const isEnv = r.kind === 'environment' || r.tool === 'check_environment';
+  const isQuestion = r.kind === 'question' || r.tool === 'ask_user';
   const isRouter = isSkill && r.auto === true;
-  const isTerminal = r.tool === 'terminal' && !isSkill;
+  const isTerminal = r.tool === 'terminal' && !isSkill && !isEnv && !isQuestion;
   const ok = r.ok !== false;
   const running = r.state === 'running';
   const [open, setOpen] = useState(false);
 
   const title = isTerminal ? r.command : r.tool || r.name || run.name || 'tool';
-  const output = isSkill
+  const output = isEnv || isQuestion
+    ? r.stdout || ''
+    : isSkill
     ? r.stdout || `Loaded: ${(r.loaded || []).join(', ') || r.command}`
     : isTerminal
       ? `${r.stdout || ''}${r.stderr ? `\n${r.stderr}` : ''}`.trim()
@@ -38,15 +42,23 @@ export function ToolRunCard({ run, theme, reduced, index = 0 }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
-        <span className={`tool-kind ${isSkill ? 'skill' : isTerminal ? 'terminal' : 'mcp'}`}>
+        <span
+          className={`tool-kind ${
+            isSkill ? 'skill' : isEnv ? 'env' : isQuestion ? 'ask' : isTerminal ? 'terminal' : 'mcp'
+          }`}
+        >
           {isSkill ? (
             <Icon.Sparkle size={13} />
+          ) : isEnv ? (
+            <Icon.Cpu size={13} />
+          ) : isQuestion ? (
+            <Icon.Route size={13} />
           ) : isTerminal ? (
             <Icon.Terminal size={13} />
           ) : (
             <Icon.Plug size={13} />
           )}
-          {isSkill ? 'skill' : isTerminal ? 'bash' : 'mcp'}
+          {isSkill ? 'skill' : isEnv ? 'env' : isQuestion ? 'ask' : isTerminal ? 'bash' : 'mcp'}
         </span>
 
         {isRouter && (

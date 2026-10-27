@@ -8,6 +8,7 @@ import ConnectorsView from './components/ConnectorsView.jsx';
 import FilesView from './components/FilesView.jsx';
 import PreviewModal from './components/PreviewModal.jsx';
 import SkillsView from './components/SkillsView.jsx';
+import QuestionCard from './components/QuestionCard.jsx';
 import { useUploader, UploadChips, DropZone } from './components/Uploader.jsx';
 import { ConnectorConfigModal, AddMcpModal } from './components/Modals.jsx';
 import { OrbSwap } from './components/AgentAvatar.jsx';
@@ -57,6 +58,9 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   // Files uploaded since the last message, attached to the next one.
   const [pendingFiles, setPendingFiles] = useState([]);
+  // Set when the agent paused to ask something (round-trip input).
+  const [ask, setAsk] = useState(null);
+  const [env, setEnv] = useState(null);
 
   const threadRef = useRef(null);
   const stickToBottom = useRef(true);
@@ -81,6 +85,7 @@ export default function App() {
     (async () => {
       try {
         client.getConfig().then((c) => !cancelled && setCaps(c)).catch(() => {});
+        client.getEnvironment().then((e) => !cancelled && setEnv(e)).catch(() => {});
         const [list, conns, skillList] = await Promise.all([
           client.getSessions(),
           client.getConnectors(),
@@ -180,6 +185,19 @@ export default function App() {
   }
 
   /* ----------------------------------------------------------- connectors */
+  function answerQuestions(responses) {
+    if (!ask) return;
+    const summary = (ask.questions || [])
+      .map((q) => `${q.question} → ${responses[q.id] || '—'}`)
+      .join('\n');
+    const request = ask;
+    setAsk(null);
+    send(summary, {
+      inputResponses: responses,
+      requestState: request.request_state,
+    });
+  }
+
   async function reloadSkills() {
     try {
       setSkills(await client.getSkills());
@@ -332,20 +350,28 @@ export default function App() {
       return;
     }
     if (type === 'command_done') {
-      updateLive((l) =>
-        l
-          ? {
-              ...l,
-              phase: PHASES.solving,
-              detail: null,
-              runs: l.runs.map((r) =>
-                r.state === 'running' && r.tool === 'terminal'
-                  ? { ...data, state: 'done' }
-                  : r,
-              ),
-            }
-          : l,
-      );
+      updateLive((l) => {
+        if (!l) return l;
+        const hasRunning = l.runs.some((r) => r.state === 'running' && r.tool === 'terminal');
+        // Environment / question cards arrive as a bare completion event.
+        const isBare = data.kind === 'environment' || data.kind === 'question';
+        const already = l.runs.some(
+          (r) => r.tool === data.tool && (isBare ? true : r.command === data.command),
+        );
+        if (isBare && !already) {
+          return { ...l, phase: PHASES.solving, detail: null, runs: [...l.runs, { ...data, state: 'done' }] };
+        }
+        return {
+          ...l,
+          phase: PHASES.solving,
+          detail: null,
+          runs: hasRunning
+            ? l.runs.map((r) =>
+                r.state === 'running' && r.tool === 'terminal' ? { ...data, state: 'done' } : r,
+              )
+            : [...l.runs, { ...data, state: 'done' }],
+        };
+      });
       return;
     }
     if (type === 'connector_start') {
@@ -420,6 +446,13 @@ export default function App() {
       client.getSkills().then(setSkills).catch(() => {});
       return;
     }
+    if (type === 'input_required') {
+      setAsk(data);
+      updateLive((l) =>
+        l ? { ...l, phase: PHASES.waiting, detail: null, awaiting: true } : l,
+      );
+      return;
+    }
     if (type === 'error') {
       updateLive((l) => (l ? { ...l, error: data } : l));
       return;
@@ -451,9 +484,14 @@ export default function App() {
 
   const busy = live !== null;
 
-  async function send(text) {
-    const attachments = pendingFiles;
-    if ((!text && attachments.length === 0) || !currentSessionId || busy) return;
+  async function send(text, { inputResponses = null, requestState = null } = {}) {
+    const attachments = inputResponses ? [] : pendingFiles;
+    if (
+      (!text && attachments.length === 0 && !inputResponses) ||
+      !currentSessionId ||
+      busy
+    )
+      return;
     setInput('');
     stickToBottom.current = true;
 
@@ -487,6 +525,8 @@ export default function App() {
         sessionId: currentSessionId,
         text: text || 'I attached some files — take a look.',
         attachments,
+        inputResponses,
+        requestState,
         signal: controller.signal,
         onEvent: handleEvent,
       });
@@ -710,6 +750,14 @@ export default function App() {
                 vision={caps.vision}
               />
 
+              {ask && (
+                <QuestionCard
+                  request={ask}
+                  onSubmit={answerQuestions}
+                  onDismiss={() => setAsk(null)}
+                />
+              )}
+
               <Composer
                 value={input}
                 onChange={setInput}
@@ -751,6 +799,7 @@ export default function App() {
               onUpdate={updateSkillDraft}
               onDelete={deleteSkillDraft}
               onRoute={routeSkills}
+              env={env}
             />
           )}
 

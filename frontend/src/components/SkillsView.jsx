@@ -32,6 +32,7 @@ export default function SkillsView({
   onUpdate,
   onDelete,
   onRoute,
+  env,
 }) {
   const [editing, setEditing] = useState(null); // null | {} (new) | skill
   const [saving, setSaving] = useState(false);
@@ -115,6 +116,55 @@ export default function SkillsView({
           )}
         </div>
       </div>
+
+      {env && (
+        <div className="env-strip" aria-label="What this machine actually has">
+          <div className="env-head">
+            <Icon.Cpu size={15} />
+            <b>Capability check</b>
+            <span>
+              Python {env.python} · probed live, injected into every prompt so the agent never
+              assumes a library it does not have.
+            </span>
+          </div>
+          <div className="env-rows">
+            <div className="env-row">
+              <span className="env-label">Third-party libs</span>
+              <span className="env-chips">
+                {(env.third_party_packages || []).length === 0 ? (
+                  <em className="env-none">none — stdlib only</em>
+                ) : (
+                  env.third_party_packages.slice(0, 10).map((p) => (
+                    <code key={p} className="env-chip on">
+                      {p}
+                    </code>
+                  ))
+                )}
+              </span>
+            </div>
+            <div className="env-row">
+              <span className="env-label">Missing</span>
+              <span className="env-chips">
+                {(env.missing_packages || []).slice(0, 8).map((p) => (
+                  <code key={p} className="env-chip off">
+                    {p}
+                  </code>
+                ))}
+              </span>
+            </div>
+            <div className="env-row">
+              <span className="env-label">CLI</span>
+              <span className="env-chips">
+                {(env.available_cli || []).map((t) => (
+                  <code key={t} className="env-chip on">
+                    {t}
+                  </code>
+                ))}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="skill-grid">
         {skills.map((skill, i) => {
