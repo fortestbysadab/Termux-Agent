@@ -131,6 +131,11 @@ When the user clicks **View** on any workspace file, the system dynamically rout
 * **The Result**: The agent immediately pivots to pure Python vector SVG generation (0.01 seconds, zero dependencies, responsive across all screens).
 
 ### 5.4 UI Micro-Interactions (Powered by `libraries.dev`)
+
+> **Implementation note (v2.1):** the console is now a React 18 app bundled at build time
+> (`frontend/`) into `web/static/app.js`, so the Python server keeps its zero-runtime-dependency
+> guarantee. **Border Beam wraps the chat composer and nothing else** — see
+> `frontend/README.md` for the state map that drives the orbs and avatars.
 * **Border Beam (`border-beam`)**:
   * An animated gradient beam riding around the border of active in-progress command executions and status cards.
   * Supported variants: `colorful` (purple -> pink -> cyan -> emerald), `ocean`, `sunset`, and `mono`.

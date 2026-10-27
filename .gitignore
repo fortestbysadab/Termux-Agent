@@ -22,3 +22,8 @@ workspaces/
 # Temporary files
 .tmp/
 .DS_Store
+
+# Frontend build tooling (the built bundle in web/static IS committed so the
+# Python app keeps working with zero Node/Python dependencies at runtime)
+frontend/node_modules/
+web/static/*.map

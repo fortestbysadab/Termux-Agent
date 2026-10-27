@@ -36,17 +36,23 @@ An autonomous AI agent with **Full Terminal Access**, **Connectors & Custom MCP 
    - Bionic CFI-safe execution sandbox (omits virtual address caps that trigger `linker_cfi.cpp:158` aborts on Android).
    - Full support for Google Gemini 2.5/3 thinking models with automatic thought signature preservation and parameter schema sanitization.
 
-7. **Zero External Dependencies**:
-   - Built entirely on the Python standard library (`sqlite3`, `http.server`, `subprocess`, `urllib`).
+7. **Zero External Runtime Dependencies**:
+   - The server, database layer, MCP client and sandbox are pure Python standard library (`sqlite3`, `http.server`, `subprocess`, `urllib`).
+   - The React console ships **pre-built** in `web/static/`, so `python3 main.py` is still the only command you need. Node is a build-time tool for developers only.
    - Automated CI testing via GitHub Actions across Python 3.10, 3.11, and 3.12.
-   - Fast, lightweight, and requires no heavy compilation on Termux.
+
+8. **Console built on [Libraries.dev](https://libraries.dev)**:
+   - **Border Beam** (`border-beam`) — a single, subtle animated glow wrapped around **the chat composer only**, calm at rest, brighter and faster while the agent works.
+   - **Thinking Orbs** (`thinking-orbs`) — every spinner replaced by an orb whose state is driven by the real SSE activity: `searching` (reasoning), `working` (running a command), `connecting` (calling a tool), `solving` (reading results), with crossfades between phases.
+   - **Bot Avatars** (`bot-avatars`) — the planner, the shell and the MCP bridge each get their own animated identity (plush / plastic bodies, distinct colours) that switches as control passes between them; connectors are a roster of sleeping (disabled), idle (connected) and working (currently called) bots.
+   - Full dark/light design system, `100dvh` mobile layout, off-canvas drawers, keyboard shortcuts, reduced-motion support and a render error boundary.
 
 ---
 
 ## 🚀 Quick Start on Termux
 
 ```bash
-# 1. Update Termux and install Python + proot
+# 1. Update Termux and install Python + proot (no Node needed — the console is pre-built)
 pkg update && pkg install -y python git proot
 
 # 2. Clone the repository (or copy this folder to Termux)
@@ -83,8 +89,24 @@ termux-agent/
 │   └── loop.py              # ReAct loop, tool execution & file detection
 └── web/
     ├── server.py            # HTTP server (zero pip dependencies)
-    └── static/
-        ├── index.html       # Single-page web console & Connectors Modal
-        ├── styles.css       # Clean, modern responsive design
-        └── app.js           # Client-side reactivity & API integration
+    └── static/              # BUILD OUTPUT — committed so Python needs no Node
+        ├── index.html       # Console shell
+        ├── app.css          # Compiled design system
+        └── app.js           # Compiled React console (React + Libraries.dev)
+
+frontend/                    # Source for the console (build-time only)
+├── build.mjs                # esbuild → web/static
+├── index.html
+└── src/                     # React components, styles, activity mapping
 ```
+
+### Working on the console
+
+```bash
+cd frontend
+npm install          # once
+npm run build        # or: npm run watch
+```
+
+See [`frontend/README.md`](frontend/README.md) for the component sources, the
+Border-Beam-is-composer-only rule, and the SSE-event → orb/avatar state map.

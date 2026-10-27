@@ -138,15 +138,8 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
-        # Static assets
-        if path in ("/", "/index.html"):
-            self._serve_static_file("index.html", "text/html")
-            return
-        elif path == "/styles.css":
-            self._serve_static_file("styles.css", "text/css")
-            return
-        elif path == "/app.js":
-            self._serve_static_file("app.js", "application/javascript")
+        # Static assets (the React console: index.html + app.js + app.css)
+        if self._try_serve_static(path):
             return
 
         # API Routes
@@ -405,17 +398,34 @@ class AgentHttpHandler(BaseHTTPRequestHandler):
 
         self._json(404, {"error": "Endpoint not found"})
 
-    def _serve_static_file(self, filename: str, content_type: str):
-        filepath = STATIC_DIR / filename
-        if not filepath.is_file():
-            self._json(404, {"error": f"Static file {filename} not found"})
-            return
-        data = filepath.read_bytes()
+    def _try_serve_static(self, path: str) -> bool:
+        """Serve anything inside web/static (the built console), traversal-safe.
+
+        Returns True when the request was handled. `/` maps to index.html.
+        """
+        rel = urllib.parse.unquote(path).lstrip("/") or "index.html"
+        if rel.endswith("/"):
+            rel += "index.html"
+        if ".." in rel or rel.startswith("."):
+            return False
+
+        target = (STATIC_DIR / rel).resolve()
+        if not target.is_file() or not target.is_relative_to(STATIC_DIR):
+            return False
+
+        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in ("application/javascript", "application/json"):
+            content_type = f"{content_type}; charset=utf-8"
+
+        data = target.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
+        return True
 
 def run_server():
     init_db()

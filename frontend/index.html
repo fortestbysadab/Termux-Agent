@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0d0e13" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Termux Agent — an autonomous terminal agent with full shell access, MCP connectors and per-session workspaces.">
+  <title>Termux Agent</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%237c6cf6'/%3E%3Cpath d='M9 12l5 4-5 4' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 21h6' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    // Paint the correct theme before first paint (no flash of the wrong theme).
+    (function () {
+      try {
+        var pref = localStorage.getItem('termux_agent_theme') || 'system';
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute(
+          'data-theme',
+          pref === 'system' ? (dark ? 'dark' : 'light') : pref
+        );
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <noscript>
+    <p style="font-family: system-ui; padding: 24px;">
+      Termux Agent needs JavaScript enabled to render its console.
+    </p>
+  </noscript>
+  <script src="/app.js"></script>
+</body>
+</html>

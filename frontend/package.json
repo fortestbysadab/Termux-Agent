@@ -1,0 +1,17 @@
+{
+  "name": "termux-agent-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Build-time only. Bundles Libraries.dev components (border-beam, thinking-orbs, bot-avatars) into web/static/vendor/libraries-dev.js so the Python app needs no Node at runtime.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "border-beam": "^1.4.1",
+    "thinking-orbs": "^0.3.2",
+    "bot-avatars": "^0.2.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "esbuild": "^0.23.0"
+  }
+}

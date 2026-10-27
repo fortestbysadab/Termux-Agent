@@ -2,287 +2,35 @@
 <html lang="en" data-theme="system">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0d0e13" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Termux Agent — an autonomous terminal agent with full shell access, MCP connectors and per-session workspaces.">
   <title>Termux Agent</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%237c6cf6'/%3E%3Cpath d='M9 12l5 4-5 4' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 21h6' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    // Paint the correct theme before first paint (no flash of the wrong theme).
+    (function () {
+      try {
+        var pref = localStorage.getItem('termux_agent_theme') || 'system';
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute(
+          'data-theme',
+          pref === 'system' ? (dark ? 'dark' : 'light') : pref
+        );
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
-  <div class="app">
-    <!-- Sidebar -->
-    <aside class="side" id="sidebar">
-      <div class="brand">
-        <div class="brand-title">
-          <div class="bot-avatar-wrap" id="brandBotAvatarWrap">
-            <canvas id="brandBotAvatar" width="64" height="64"></canvas>
-          </div>
-          <span>Termux Agent</span>
-        </div>
-      </div>
-
-      <button class="newchat-btn" id="newChatBtn">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-        New chat
-      </button>
-
-      <!-- Navigation Tabs -->
-      <nav class="nav-tabs">
-        <button id="navChat" class="nav-tab active" aria-current="page">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-          Chat
-        </button>
-        <button id="navConnectors" class="nav-tab">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-          Connectors
-          <span class="count" id="activeConnectorsBadge">0</span>
-        </button>
-        <button id="navFiles" class="nav-tab">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-          </svg>
-          Files
-          <span class="count" id="workspaceFilesBadge">0</span>
-        </button>
-      </nav>
-
-      <div class="history scroll">
-        <div class="histhead">Recent chats</div>
-        <div id="sessionsList"></div>
-      </div>
-
-      <div class="sidefoot">
-        <div class="themes" id="themePicker">
-          <button data-theme-val="system" aria-pressed="true">system</button>
-          <button data-theme-val="light">light</button>
-          <button data-theme-val="dark">dark</button>
-        </div>
-        <button class="ghost" id="clearAllChatsBtn">Clear all chats</button>
-      </div>
-    </aside>
-
-    <div class="scrim" id="scrim"></div>
-
-    <!-- Main Section -->
-    <main class="main">
-      <header class="topbar">
-        <button class="burger" id="burgerBtn" aria-label="Open sidebar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
-          </svg>
-        </button>
-        <h1 id="topbarTitle">New chat</h1>
-
-        <div class="topbar-actions">
-          <!-- Arena-style Workspace Toggle Button with badge -->
-          <button class="btn btn-workspace-toggle" id="toggleWorkspaceBoxBtn" title="Open Session Workspace Box">
-            📁 Workspace <span class="count" id="topbarWorkspaceCount">0</span>
-          </button>
-          <div class="status">
-            <span class="dot"></span>
-            <span>Sandbox ready</span>
-          </div>
-        </div>
-      </header>
-
-      <!-- Screen 1: Chat Screen -->
-      <section class="screen chat" id="chatScreen">
-        <div class="thread-container scroll" id="threadContainer">
-          <div class="thread" id="messagesList"></div>
-        </div>
-
-        <div class="composer">
-          <div class="shell">
-            <textarea 
-              id="chatInput" 
-              placeholder="Ask anything, run a terminal command, or request files..." 
-              rows="1"
-            ></textarea>
-            <div class="shellfoot">
-              <span class="hint">Press Enter to send, Shift+Enter for newline</span>
-              <button class="sendbtn" id="sendBtn" title="Send message" disabled>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="M12 4l-8 8h5v8h6v-8h5z"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="privacy" style="font-size: 11px; color: var(--muted); text-align: center; margin-top: 6px;">
-            <span>⚡ Isolated per-session /workspace sandbox</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Screen 2: Connectors Screen -->
-      <section class="screen hidden" id="connectorsScreen">
-        <div class="screen-header">
-          <h2>Connectors & Custom MCP</h2>
-          <p>Connect third-party apps and Model Context Protocol servers to use in Agent chats.</p>
-        </div>
-
-        <div class="connectors-grid" id="connectorsList"></div>
-
-        <!-- Custom MCP Section -->
-        <div class="custom-mcp-section">
-          <h3>Custom MCP Connector</h3>
-          <p>Connect your own Model Context Protocol server via local stdio command (e.g. <code>npx -y @modelcontextprotocol/server-postgres</code>) or remote HTTP/SSE endpoint.</p>
-          <button class="btn btn-primary" id="openAddMcpBtn">+ Add Custom MCP Server</button>
-        </div>
-      </section>
-
-      <!-- Screen 3: Workspace Files Screen -->
-      <section class="screen hidden" id="filesScreen">
-        <div class="screen-header">
-          <h2>Workspace Files</h2>
-          <p>Files created or modified in this session's isolated sandbox directory.</p>
-        </div>
-
-        <input type="text" id="fileFilterInput" class="filter" placeholder="Filter files by name...">
-        <div id="workspaceFilesList" class="card-grid"></div>
-      </section>
-
-      <!-- Arena-Style Per-Session Workspace Box Panel -->
-      <aside class="workspace-panel" id="workspacePanel">
-        <div class="workspace-panel-head">
-          <div class="workspace-title-row">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 16px;">📁</span>
-              <span class="workspace-panel-title">Workspace</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <a id="downloadWorkspaceZipBtn" class="btn-icon" title="Download workspace as ZIP">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-              </a>
-              <button id="closeWorkspacePanelBtn" class="btn-icon" title="Close panel">✕</button>
-            </div>
-          </div>
-          <div class="workspace-quota" id="workspaceQuotaText">0 KB / 128.0 MB · 0 files</div>
-        </div>
-
-        <div class="workspace-section">
-          <div class="workspace-section-title">
-            <span>Processes</span>
-            <span class="count">1</span>
-          </div>
-          <div class="process-card">
-            <span class="process-dot"></span>
-            <span class="process-name">Termux Agent Server</span>
-            <span class="process-port">:8080</span>
-          </div>
-        </div>
-
-        <div class="workspace-section" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-          <div class="workspace-section-title">
-            <span>Session Files</span>
-            <span class="count" id="workspaceBoxFileCount">0</span>
-          </div>
-          <div class="workspace-tree scroll" id="workspaceBoxFileList">
-            <div style="padding: 14px 0; color: var(--muted); font-size: 12px; text-align: center;">No files in session workspace.</div>
-          </div>
-        </div>
-      </aside>
-
-      <div class="scrim" id="workspaceScrim"></div>
-    </main>
-  </div>
-
-  <!-- Connector Config Modal -->
-  <div class="modal-backdrop" id="connectorConfigModal">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2 id="configConnectorName">Configure Connector</h2>
-        <button class="btn-icon" id="closeConfigModalBtn">✕</button>
-      </div>
-      <div class="modal-body">
-        <form id="connectorConfigForm">
-          <input type="hidden" id="configConnectorId">
-          <div id="configFormFields"></div>
-          <div class="modal-actions">
-            <button type="button" class="btn" id="cancelConfigBtn">Cancel</button>
-            <button type="submit" class="btn btn-primary">Save & Connect</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Custom MCP Modal -->
-  <div class="modal-backdrop" id="addMcpModal">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2>Add Custom MCP Server</h2>
-        <button class="btn-icon" id="closeAddMcpModalBtn">✕</button>
-      </div>
-      <div class="modal-body">
-        <form id="addMcpForm">
-          <div class="form-group">
-            <label for="mcpName">Server Name</label>
-            <input type="text" id="mcpName" placeholder="e.g. PostgreSQL, Local Docker" required>
-          </div>
-          <div class="form-group">
-            <label for="mcpKind">Transport Protocol</label>
-            <select id="mcpKind">
-              <option value="mcp_stdio">Standard I/O (Local Process)</option>
-              <option value="mcp_sse">Server-Sent Events (HTTP/SSE)</option>
-            </select>
-          </div>
-          <div class="form-group" id="mcpCommandGroup">
-            <label for="mcpCommand">Shell Command</label>
-            <input type="text" id="mcpCommand" placeholder="e.g. npx -y @modelcontextprotocol/server-postgres">
-          </div>
-          <div class="form-group hidden" id="mcpUrlGroup">
-            <label for="mcpUrl">SSE Endpoint URL</label>
-            <input type="url" id="mcpUrl" placeholder="https://example.com/sse">
-          </div>
-          <div class="form-group">
-            <label for="mcpDescription">Description (Optional)</label>
-            <input type="text" id="mcpDescription" placeholder="What tools does this server provide?">
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="btn" id="cancelAddMcpBtn">Cancel</button>
-            <button type="submit" class="btn btn-primary">Add Server</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Rich File Preview Modal (Spreadsheets, PDFs, Images, Code) -->
-  <div class="modal-backdrop" id="filePreviewModal">
-    <div class="modal-card modal-lg">
-      <div class="modal-header">
-        <h2 id="previewFileName">File Preview</h2>
-        <div class="modal-header-actions">
-          <a class="btn btn-primary" id="downloadPreviewBtn" download>Download</a>
-          <button class="btn-icon" id="closePreviewBtn">✕</button>
-        </div>
-      </div>
-      <div class="modal-body">
-        <!-- Spreadsheet Preview Container -->
-        <div id="previewSpreadsheetContainer" style="display: none;"></div>
-
-        <!-- PDF Preview Card Container -->
-        <div id="previewPdfContainer" style="display: none;"></div>
-
-        <!-- Media / Images Preview Container -->
-        <div id="previewMediaContainer" style="display: none; text-align: center; padding: 10px;"></div>
-
-        <!-- Text / Code Preview Container -->
-        <pre class="prose pre" id="previewFileContent" style="white-space: pre-wrap; font-size: 13px; max-height: 60vh;"></pre>
-      </div>
-    </div>
-  </div>
-
+  <div id="root"></div>
+  <noscript>
+    <p style="font-family: system-ui; padding: 24px;">
+      Termux Agent needs JavaScript enabled to render its console.
+    </p>
+  </noscript>
   <script src="/app.js"></script>
 </body>
 </html>

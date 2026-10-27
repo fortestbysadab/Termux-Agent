@@ -293,5 +293,36 @@ class TestTermuxAgent(unittest.TestCase):
         self.assertTrue("done" in event_types or "error" in event_types)
         delete_session(sid)
 
+    def test_console_assets_are_built(self):
+        """The React console must ship pre-built so the server stays dependency-free."""
+        from pathlib import Path
+        from web.server import STATIC_DIR
+
+        for name in ("index.html", "app.js", "app.css"):
+            asset = Path(STATIC_DIR) / name
+            self.assertTrue(asset.is_file(), f"missing {name} — run: cd frontend && npm run build")
+            self.assertGreater(asset.stat().st_size, 500, f"{name} looks empty")
+
+        html = (Path(STATIC_DIR) / "index.html").read_text(encoding="utf-8")
+        self.assertIn("/app.css", html)
+        self.assertIn("/app.js", html)
+        # No external assets: the console must work fully offline on a phone.
+        # (Inline data: URIs such as the SVG favicon are fine — they never fetch.)
+        for pattern in ('src="http', 'href="http', "href='http"):
+            self.assertNotIn(pattern, html)
+
+    def test_libraries_dev_components_are_bundled(self):
+        """Border Beam, Thinking Orbs and Bot Avatars are compiled into app.js."""
+        from pathlib import Path
+        from web.server import STATIC_DIR
+
+        bundle = (Path(STATIC_DIR) / "app.js").read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "data-beam",        # border-beam (composer only)
+            "requestAnimationFrame",  # thinking-orbs + bot-avatars canvases
+            "ThinkingOrb" if "ThinkingOrb" in bundle else "thinking-orbs",
+        ):
+            self.assertIn(marker, bundle)
+
 if __name__ == "__main__":
     unittest.main()
